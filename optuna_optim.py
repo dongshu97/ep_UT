@@ -78,12 +78,6 @@ parser.add_argument(
     default=1,
     help='N winner (default: 1)')
 parser.add_argument(
-    '--Optimizer',
-    type=str,
-    default='SGD',
-    help='the optimizer to be used (default=SGD, else:Adam)'
-)
-parser.add_argument(
     '--coeffDecay',
     type=float,
     default=1,
@@ -204,7 +198,7 @@ def returnYinYang(batchSize, batchSizeTest=128):
     return train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader
 
 
-def argsCreate(exp_args, batchSize, T, Kmax, beta, lr, eta, gamma, nudge_N, dropProb):
+def argsCreate(exp_args, batchSize, T, Kmax, beta, lr, Optimizer, errorEstimate, lossFunction, eta, gamma, nudge_N, dropProb):
     args = argparse.Namespace()
     args.device = exp_args.device
     args.dataset = exp_args.dataset
@@ -222,11 +216,14 @@ def argsCreate(exp_args, batchSize, T, Kmax, beta, lr, eta, gamma, nudge_N, drop
     args.fcLayers = exp_args.structure.copy()
     args.lr = lr.copy()
     args.activation_function = exp_args.exp_activation
+    args.Optimizer = Optimizer
+    args.errorEstimate = errorEstimate
+    args.lossFunction = lossFunction
     args.eta = eta
     args.gamma = gamma
     args.nudge_N = nudge_N
     args.n_class = exp_args.n_class
-    args.Optimizer = exp_args.Optimizer
+
     args.coeffDecay = exp_args.coeffDecay
     args.gammaDecay = exp_args.gammaDecay
     args.epochDecay = exp_args.epochDecay
@@ -245,11 +242,15 @@ def train_validation_test(args, net, trial, train_loader, validation_loader, tes
         print("Training the model with supervised ep")
 
         for epoch in tqdm(range(exp_args.epochs)):
-            train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
-            validaation_error_epoch = test_supervised_ep(net, args, validation_loader)
+            if args.lossFucntion == 'MSE':
+                train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
+            elif args.lossFunction == 'Cross-entropy':
+                train_error_epoch = train_supervised_crossEntropy(net, args, train_loader, epoch)
+
+            validation_error_epoch = test_supervised_ep(net, args, validation_loader)
 
             # Handle pruning based on the intermediate value.
-            trial.report(validaation_error_epoch, epoch)
+            trial.report(validation_error_epoch, epoch)
             if trial.should_prune():
                 raise optuna.TrialPruned()
         test_error = test_supervised_ep(net, args, test_loader)
@@ -286,6 +287,9 @@ def objective(trial, exp_args):
     lr1 = trial.suggest_float("lr1", 1e-5, 0.1, log=True)
     lr_coeff = trial.suggest_float("lr_coeff", 0.5, 4)
     lr = [lr1, lr_coeff*lr1]
+    Optimizer = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
+    errorEstimate = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
+    lossFunction = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
 
     if exp_args.action == 'supervised_ep':
         eta = 0.6
@@ -296,7 +300,7 @@ def objective(trial, exp_args):
         gamma = trial.suggest_float("gamma", 0.001, 1, log=True)
         nudge_N = trial.suggest_int("nudge_N", 1, 6)
 
-    if exp_args.dataset=='YinYang':
+    if exp_args.dataset =='YinYang':
         dropProb=[0,0]
     else:
         drop1 = trial.suggest_float("drop1", 0.05, 0.4)
@@ -304,7 +308,7 @@ def objective(trial, exp_args):
         dropProb = [drop1, drop2]
 
     # create the args for the training'
-    args = argsCreate(exp_args, batchSize, T, Kmax, beta, lr, eta, gamma, nudge_N, dropProb)
+    args = argsCreate(exp_args, batchSize, T, Kmax, beta, lr, Optimizer, errorEstimate, lossFunction, eta, gamma, nudge_N, dropProb)
     args.fcLayers.reverse()  # we put in the other side, output first, input last
     args.lr.reverse()
     args.dropProb.reverse()

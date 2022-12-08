@@ -40,13 +40,13 @@ parser.add_argument(
 parser.add_argument(
     '--epochs',
     type=int,
-    default=50,
+    default=100,
     metavar='N',
     help='number of epochs to train (default: 100)')
 parser.add_argument(
     '--batchSize',
     type=int,
-    default=20,
+    default=28,
     help='Batch size (default=128)')
 parser.add_argument(
     '--test_batchSize',
@@ -61,17 +61,17 @@ parser.add_argument(
 parser.add_argument(
     '--T',
     type=int,
-    default=30,
+    default=40,
     help='number of time steps in the free phase (default: 40) - Let the system relax with oscillators dynamics')
 parser.add_argument(
     '--Kmax',
     type=int,
-    default=10,
+    default=15,
     help='number of time steps in the backward pass (default: 50)')
 parser.add_argument(
     '--beta',
     type=float,
-    default=0.5,
+    default=0.37,
     metavar='BETA',
     help='nudging parameter (default: 0.5)')
 parser.add_argument(
@@ -95,7 +95,7 @@ parser.add_argument(
     '--fcLayers',
     nargs='+',
     type=int,
-    default=[4, 10, 3],
+    default=[4, 30, 3],
     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
 parser.add_argument(
     '--lr',
@@ -108,6 +108,24 @@ parser.add_argument(
     type=str,
     default='hardsigm',
     help='activation function')
+parser.add_argument(
+    '--Optimizer',
+    type=str,
+    default='SGD',
+    help='the optimizer to be used (default=SGD, else:Adam)'
+)
+parser.add_argument(
+    '--errorEstimate',
+    type=str,
+    default='one-sided',
+    help='Two different way to estimate the loss (default=one-sided, else:symmetric)'
+)
+parser.add_argument(
+    '--lossFunction',
+    type=str,
+    default='MSE',
+    help='Define the type of loss function (default=MSE, else:Cross-entropy)'
+)
 parser.add_argument(
     '--eta',
     type=float,
@@ -131,12 +149,6 @@ parser.add_argument(
     type=int,
     default=10,
     help='the number of class (default = 10)'
-)
-parser.add_argument(
-    '--Optimizer',
-    type=str,
-    default='SGD',
-    help='the optimizer to be used (default=SGD, else:Adam)'
 )
 parser.add_argument(
     '--coeffDecay',
@@ -328,7 +340,7 @@ if args.activation_function == 'sigm':
 
 elif args.activation_function == 'hardsigm':
     def rho(x):
-        return x.clamp(min=0).clamp(max = 1)
+        return x.clamp(min=0).clamp(max=1)
 
     def rhop(x):
         return (x >= 0) & (x <= 1)
@@ -387,7 +399,7 @@ if __name__ == '__main__':
 
         data, target = next(iter(train_loader))
 
-        s = net.initHidden(args, data)
+        s = net.initState(args, data)
         # TODO rewrite the registation for dy
         if net.cuda:
             s = [item.to(net.device) for item in s]
@@ -438,8 +450,10 @@ if __name__ == '__main__':
         test_error_list = []
 
         for epoch in tqdm(range(args.epochs)):
-
-            train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
+            if args.lossFunction=='MSE':
+                train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
+            elif args.lossFunction == 'Cross-entropy':
+                train_error_epoch = train_supervised_crossEntropy(net, args, train_loader, epoch)
 
             test_error_epoch = test_supervised_ep(net, args, test_loader)
 
@@ -600,7 +614,7 @@ if __name__ == '__main__':
                     data = image.view(image.size(-1), -1)
                     # TODO we should change the size back to 28*28!
                 # initialize
-                s = net.initHidden(args, data)
+                s = net.initState(args, data)
                 # transfer to cuda
                 if net.cuda:
                     s = [item.to(net.device) for item in s]

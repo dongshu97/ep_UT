@@ -26,7 +26,7 @@ def classify(net, args, class_loader):
     for batch_idx, (data, targets) in enumerate(class_loader):
 
         # initiation of s
-        s = net.initHidden(args.fcLayers, data)
+        s = net.initState(args.fcLayers, data)
 
         if net.cuda:
             targets = targets.to(net.device)#no need to put data on the GPU as data is included in s!
@@ -70,6 +70,69 @@ def classify(net, args, class_loader):
     return response, max0_indice
 
 
+def train_supervised_crossEntropy(net,args, train_loader, epoch):
+    net.train()
+    net.epoch = epoch + 1
+    total_train = torch.zeros(1, device=net.device).squeeze()
+    correct_train = torch.zeros(1, device=net.device).squeeze()
+
+    for batch_idx, (data, targets) in enumerate(train_loader):
+
+        # random signed beta: better approximate the gradient
+        net.beta = torch.sign(torch.randn(1)) * args.beta
+        # init the hidden layers
+        h = net.initHidden(args.fcLayers, data)
+
+        if net.cuda:
+            targets = targets.to(net.device)
+            net.beta = net.beta.to(net.device)
+            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+
+        if args.errorEstimate == 'one-sided':
+            # free phase
+            h, y = net.forward_softmax(h)
+            heq = h.copy()
+            yeq = y.clone()
+            if len(h) > 1:
+                h, y = net.forward_softmax(h, target=targets, beta=net.beta)
+            # update the weights
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight_softmax(h, heq, y, targets,epoch=net.epoch)
+            else:
+                net.updateWeight_softmax(h, heq, y, targets)
+
+        elif args.errorEstimate == 'symmetric':
+            if len(h) <= 1:
+                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
+            # free phase
+            h, y = net.forward_softmax(h)
+            heq = h.copy()
+            yeq = y.clone()
+            # + beta
+            h, y = net.forward_softmax(h, target=targets, beta=net.beta)
+            hplus = h.copy()
+            yplus = y.clone()
+            # -beta
+            h = heq.copy()
+            h, y = net.forward_softmax(h, target=targets, beta=-net.beta)
+            hmoins = h.copy()
+            ymoins = y.clone()
+        # update and track the weights of the network
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight_softmax(hplus, hmoins, yplus, targets, ybeta=ymoins, epoch=net.epoch)
+            else:
+                net.updateWeight_softmax(hplus, hmoins, yplus, targets, ybeta=ymoins)
+
+        # calculate the training error
+        prediction = torch.argmax(yeq.detach(), dim=1)
+        correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
+        total_train += targets.size(dim=0)
+
+    # calculate the train error
+    train_error = 1 - correct_train / total_train
+    return train_error
+
+
 def train_supervised_ep(net, args, train_loader, epoch):
     net.train()
     net.epoch = epoch + 1
@@ -85,26 +148,39 @@ def train_supervised_ep(net, args, train_loader, epoch):
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * args.beta
 
-        s = net.initHidden(args.fcLayers, data)
+        s = net.initState(args.fcLayers, data)
 
         if net.cuda:
             targets = targets.to(net.device)
             net.beta = net.beta.to(net.device)
             s = [item.to(net.device) for item in s] #no need to put data on the GPU as data is included in s!
 
-        #free phase
-        s = net.forward(s)
+        if args.errorEstimate == 'one-sided':
+            # free phase
+            s = net.forward(s)
+            seq = s.copy()
+            s = net.forward(s, target=targets, beta=net.beta)
 
-        seq = s.copy()
-
-        s = net.forward(s, target=targets, beta=net.beta)
-
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight(s, seq, epoch=net.epoch)
+            else:
+                net.updateWeight(s, seq)
+        elif args.errorEstimate == 'symmetric':
+            # free phase
+            s = net.forward(s)
+            seq = s.copy()
+            # + beta
+            s = net.forward(s, target=targets, beta=net.beta)
+            splus = s.copy()
+            # -beta
+            s = seq.copy()
+            s = net.forward(s, target=targets, beta=-net.beta)
+            smoins = s.copy()
         # update and track the weights of the network
-        #net.updateWeight(s, seq)
-        if args.Optimizer=='Adam':
-            net.Adam_updateWeight(s, seq, epoch=net.epoch)
-        else:
-            net.updateWeight(s, seq)
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight(splus, smoins, epoch=net.epoch)
+            else:
+                net.updateWeight(splus, smoins)
 
         # calculate the training error
         prediction = torch.argmax(seq[0].detach(), dim=1)
@@ -141,7 +217,7 @@ def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mB
 
         #net.beta = args.beta
 
-        s = net.initHidden(args.fcLayers, data)
+        s = net.initState(args.fcLayers, data)
 
         if net.cuda:
             net.beta = net.beta.to(net.device)
@@ -230,7 +306,7 @@ def test_unsupervised_ep(net, args, test_loader, response):
 
     for batch_idx, (data, targets) in enumerate(test_loader):
 
-        s = net.initHidden(args.fcLayers, data)
+        s = net.initState(args.fcLayers, data)
 
         if net.cuda:
             targets = targets.to(net.device)
@@ -293,7 +369,7 @@ def test_supervised_ep(net, args, test_loader):
 
     for batch_idx, (data, targets) in enumerate(test_loader):
 
-        s = net.initHidden(args.fcLayers, data)
+        s = net.initState(args.fcLayers, data)
 
         if net.cuda:
             targets = targets.to(net.device)

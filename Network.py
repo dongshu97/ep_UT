@@ -9,6 +9,7 @@ from main import rho, rhop
 from typing import List, Optional, Tuple
 
 
+
 '''
 Try to use the same function name for the MLP class and Conv class
 but the problem is that, there are different variables for Conv class than the MLP class,
@@ -33,6 +34,7 @@ class MlpEP(jit.ScriptModule):
         self.batchSize = args.batchSize
         self.gamma = args.gamma
         self.fcLayers = args.fcLayers
+        self.errorEstimate = args.errorEstimate
 
         # define the device
         if args.device >= 0 and torch.cuda.is_available():
@@ -93,7 +95,49 @@ class MlpEP(jit.ScriptModule):
         return p_distribut
 
     @jit.script_method
-    def stepper_c_ep(self, s:List[torch.Tensor], target:Optional[torch.Tensor]=None, beta:Optional[float]=None):
+    def stepper_hidden(self, h:List[torch.Tensor], target:Optional[torch.Tensor]=None,
+                          beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor]:
+
+        y = F.softmax(torch.mm(rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        if len(h) > 1:
+            dhdt=[]
+            dhdt.append(-h[0] + (rhop(h[0]) * (torch.mm(rho(h[1]), self.W[1]) + self.bias[1])))
+            if target is not None and beta is not None:
+                dhdt[0] = dhdt[0] + beta * torch.mm((target-y), self.W[0].T)
+
+            for layer in range(1, len(h)-1):
+                dhdt.append(-h[layer] + rhop(h[layer]) * (
+                            torch.mm(rho(h[layer + 1]), self.W[layer+1]) + self.bias[layer+1] + torch.mm(rho(h[layer - 1]),
+                                                                                                     self.W[layer].T)))
+
+            for (layer, dhdt_item) in enumerate(dhdt):
+                h[layer] = h[layer]+self.dt*dhdt_item
+                if self.clamped:
+                    h[layer] = h[layer].clamp(0, 1)
+
+        return h, y
+
+    @jit.script_method
+    def forward_softmax(self, h:List[torch.Tensor], beta:Optional[float]=None, target:Optional[torch.Tensor]=None,
+                ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+
+        T, Kmax = self.T, self.Kmax
+
+        y = F.softmax(torch.mm(rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+
+        with torch.no_grad():
+            if beta is None and target is None:
+                if len(h) > 1:
+                    for t in range(T):
+                        h, y = self.stepper_hidden(h, target=target, beta=beta)
+            else:
+                for t in range(Kmax):
+                    h, y = self.stepper_hidden(h, target=target, beta=beta)
+        return h, y
+
+    @jit.script_method
+    def stepper_c_ep(self, s:List[torch.Tensor], target:Optional[torch.Tensor]=None,
+                     beta:Optional[float]=None):
         '''
         stepper function for energy-based dynamics of EP
         '''
@@ -137,7 +181,7 @@ class MlpEP(jit.ScriptModule):
             if p_distribut is not None:
                 s[layer] = p_distribut[layer]*(s[layer] + self.dt * dsdt_item)
             else:
-                s[layer] = s[layer] + self.dt *dsdt_item
+                s[layer] = s[layer] + self.dt * dsdt_item
 
             # s[0] = s[0].clamp(0, 1)
             if self.clamped:
@@ -154,7 +198,7 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             # continuous time EP
             if p_distribut is None:
-                if beta is None and target is not None:
+                if beta is None and target is None:
                     # free phase
                     # TODO this if selection can be improved by giving the T/Kmax outside
                     for t in range(T):
@@ -165,7 +209,7 @@ class MlpEP(jit.ScriptModule):
                     for t in range(Kmax):
                         s = self.stepper_c_ep(s, target=target, beta=beta)
             else:
-                if beta is None and target is not None:
+                if beta is None and target is None:
                     # free phase
                     for t in range(T):
                         s = self.dropout_stepper(s, p_distribut, target=target, beta=beta)
@@ -187,6 +231,9 @@ class MlpEP(jit.ScriptModule):
         # learning rate should be the 1/beta of the BP learning rate
         # in this way the learning rate is correspended with the sign of beta
         coef = 1/(self.beta*batch_size)
+        if self.errorEstimate == 'symmetric':
+            coef = coef*0.5
+
         alpha = 0.1
         gradW, gradBias = [], []
 
@@ -201,6 +248,87 @@ class MlpEP(jit.ScriptModule):
             #                  alpha*self.W[layer])
             #     gradBias.append(coef*(rho(s[layer])-rho(seq[layer])).sum(0)-alpha*self.bias[layer])
         return gradW, gradBias
+
+    @jit.script_method
+    def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
+                             ybeta:Optional[torch.Tensor]=None):
+        # define the coefficient for the hidden neurons
+        batch_size = h[0].size(0)
+        coef = 1 / (self.beta * batch_size)
+        if self.errorEstimate == 'symmetric':
+            coef = coef * 0.5
+        gradW, gradBias = [], []
+
+        with torch.no_grad():
+            if ybeta is None:
+                gradW.append(-torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)))
+                gradBias.append(-(y-target).sum(0))
+            else:
+                gradW.append(-0.5*(torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)) +
+                                          torch.mm(torch.transpose(rho(heq[0]), 0, 1), (ybeta-target))))
+                gradBias.append(-0.5*(y+ybeta-2*target).sum(0))
+            for layer in range(len(h)-1):
+                gradW.append(coef * (torch.mm(torch.transpose(rho(h[layer + 1]), 0, 1), rho(h[layer]))
+                                     - torch.mm(torch.transpose(rho(heq[layer + 1]), 0, 1), rho(heq[layer]))))
+                gradBias.append(coef * (rho(h[layer]) - rho(heq[layer])).sum(0))
+        return gradW, gradBias
+
+    @jit.script_method
+    def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
+                             ybeta:Optional[torch.Tensor]=None, epoch=1):
+
+        '''update the weights and biases of network with a softmax output'''
+
+        gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
+        with torch.no_grad():
+            # update the hidden layers
+            for layer in range(len(self.W)):
+                lrDecay = self.lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
+                self.W[layer] += lrDecay * gradW[layer]
+                self.bias[layer] += lrDecay * gradBias[layer]
+
+    @jit.script_method
+    def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
+                             ybeta:Optional[torch.Tensor]=None, epoch=1):
+        gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
+
+        m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
+        # update weights and bias
+        with torch.no_grad():
+            # lrDecay = 0.01*np.power(0.97, epoch)
+            # lrDecay = 0.01*np.power(0.5, int(epoch/10))
+
+            for layer in range(len(self.W)):
+                # calculate the iteration momentum and velocity
+                m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
+                m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
+                # self.m_dw[layer] = self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer]  # momentum for weights
+                # self.m_db[layer] = self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer]  # momentum for bias
+
+                v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer] ** 2))
+                v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer] ** 2))
+
+                # self.v_dw[layer] = self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2)  # velocity for weights
+                # self.v_db[layer] = self.beta2 * self.v_db[layer] + (1 - self.beta2) * gradBias[layer]  # velocity for bias
+
+                # bias correction
+                m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
+                m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
+                v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
+                v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
+
+                # update the weight
+                # TODO solve the problem of torch.pow or np.power
+                lrDecay = self.lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
+                                                     torch.tensor(int(epoch / self.epochDecay)))
+                # print('the decayed lr is:', lrDecay)
+                # print('alpha is:', alpha[layer])
+                self.W[layer] += lrDecay * (m_dw_corr / (torch.sqrt(v_dw_corr) + self.epsillon))
+                self.bias[layer] += lrDecay * (m_db_corr / (torch.sqrt(v_db_corr) + self.epsillon))
+        self.m_dw = m_dw_new
+        self.m_db = m_db_new
+        self.v_dw = v_dw_new
+        self.v_db = v_db_new
 
     @jit.script_method
     def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], epoch=1):
@@ -325,7 +453,7 @@ class MlpEP(jit.ScriptModule):
 
         return unsupervised_targets, N_maxindex
 
-    def initHidden(self, fcLayers, data):
+    def initState(self, fcLayers, data):
         '''
         Init the state of the network
         State if a dict, each layer is state["S_layer"]
@@ -339,6 +467,20 @@ class MlpEP(jit.ScriptModule):
         state.append(data.float())
 
         return state
+
+    def initHidden(self, fcLayers, data):
+        h = []
+        size = data.size(0)
+        # y = torch.zeors(size, fcLayers[0], requires_grad=False)
+        for layer in range(1, len(fcLayers)-1):
+            h.append(torch.zeros(size, fcLayers[layer], requires_grad=False))
+
+        h.append(data.float())
+
+        return h
+
+
+
 
 
 # class Dropout(nn.Module):
@@ -555,7 +697,7 @@ class ConvEP(nn.Module):
                 param.weight.data += self.lr[cv+self.fc_number] * gradW_conv[cv]
                 param.weight.data += self.lr[cv+self.fc_number] * gradBias_conv[cv]
 
-    def initHidden(self, args, data):
+    def initState(self, args, data):
         '''
         Inite the state of CNN
         '''
