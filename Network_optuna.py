@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.jit as jit
 
-from main import rho, rhop
+from optuna_optim import rho, rhop
 from typing import List, Optional, Tuple
 
 

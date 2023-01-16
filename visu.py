@@ -54,3 +54,25 @@ def plot_spike(spike, figName, path, prefix):
     plt.savefig(str(path) + prefix + figName + '.png', format='png', dpi=300)
 
 
+def visu_YinYang_result(class_record, test_dataset, path, prefix, figName='output_visu'):
+    num_colors = 3
+    cm = plt.get_cmap('gist_rainbow')
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax_set_color_cycle = ([cm(1. * i / num_colors) for i in range(num_colors)])
+
+    label_name = ['yin', 'yang', 'dot']
+
+    test_dataset = np.array(test_dataset)
+    for i in range(num_colors):
+        pos_x = test_dataset[np.argwhere(np.array(class_record) == i).ravel(), 0]
+        pos_y = test_dataset[np.argwhere(np.array(class_record) == i).ravel(), 1]
+        ax.scatter(pos_x, pos_y, s=10, label=i)
+        ax.legend()
+    ax.legend(label_name, loc='upper left')
+
+    plt.savefig(str(path) + prefix + figName + '.png', format='png', dpi=300)
+    # plt.scatter(Y[:, 0], Y[:, 1], c=labels)
+    # plt.figure
+
+

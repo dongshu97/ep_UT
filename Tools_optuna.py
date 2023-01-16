@@ -16,7 +16,7 @@ import pandas as pd
 import shutil
 from tqdm import tqdm
 
-from Network import*
+from Network_optuna import*
 
 
 def classify(net, args, class_loader):

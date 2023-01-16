@@ -19,24 +19,24 @@ parser.add_argument(
     '--structure',
     nargs='+',
     type=int,
-    default=[4, 30, 3],
+    default=[784, 100],
     help='Test structure')
 parser.add_argument(
     '--dataset',
     type=str,
-    default='YinYang',
+    default='mnist',
     help='Dataset (default:YinYang, else:mnist)'
 )
 parser.add_argument(
     '--action',
     type=str,
-    default='supervised_ep',
+    default='unsupervised_ep',
     help='Decide the learning method (default:supervised_ep, else:unsupervised_ep)'
 )
 parser.add_argument(
     '--epochs',
     type=int,
-    default=100,
+    default=40,
     metavar='N',
     help='number of epochs to train (default: 100)')
 parser.add_argument(
@@ -63,20 +63,20 @@ parser.add_argument(
 parser.add_argument(
     '--n_class',
     type=int,
-    default=3,
+    default=10,
     help='the number of class (default = 10)'
 )
 parser.add_argument(
     '--Homeo_mode',
     type=str,
-    default='SM',
+    default='batch',
     help='batch mode or SM mode'
 )
 parser.add_argument(
     '--exp_N',
     type=int,
-    default=1,
-    help='N winner (default: 1)')
+    default=3,
+    help='max N winner (default: 3)')
 parser.add_argument(
     '--coeffDecay',
     type=float,
@@ -92,7 +92,7 @@ parser.add_argument(
 parser.add_argument(
     '--epochDecay',
     type=float,
-    default=1,
+    default=100,
     help='the epoch to decay the learning rate (default=10, other:5, 15)'
 )
 parser.add_argument(
@@ -104,7 +104,7 @@ parser.add_argument(
 parser.add_argument(
     '--Dropout',
     type=int,
-    default=0,
+    default=1,
     help='to decide whether to use the Dropout'
 )
 exp_args = parser.parse_args()
@@ -133,8 +133,10 @@ elif exp_args.exp_activation == 'tanh':
 
 
 # define the dataset
-def returnMNIST(batchSize,batchSizeTest=256):
-
+def returnMNIST(class_seed, batchSize,batchSizeTest=256):
+    # we will not use the validation set for MNIST in the hyperparameter research
+    # we take the influence of class seed into consideration
+    # TODO split the dataset by the train_test_split
     # define the optimization dataset
     print('We use the MNIST Dataset')
     # Define the Transform
@@ -147,31 +149,22 @@ def returnMNIST(batchSize,batchSizeTest=256):
                                            transform=torchvision.transforms.Compose(transforms),
                                            target_transform=ReshapeTransformTarget(10))
 
-    rest_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
+    validation_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
                                           transform=torchvision.transforms.Compose(transforms))
 
-    validation_seed = 1
+    # rest_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
+    #                                       transform=torchvision.transforms.Compose(transforms))
 
-    validation_set = ValidationDataset(root='./MNIST_validate_seed', rest_set=rest_set, seed=validation_seed,
+
+    class_set = ClassDataset(root='./MNIST_class_seed', test_set=validation_set, seed=class_seed,
                              transform=torchvision.transforms.Compose(transforms))
-
-    classValidation_set = ClassDataset(root='./MNIST_classValidate', test_set=validation_set, seed=validation_seed,
-                             transform=torchvision.transforms.Compose(transforms))
-
-    test_set = HypertestDataset(root='./MNIST_validate_seed', rest_set=rest_set, seed=validation_seed,
-                             transform=torchvision.transforms.Compose(transforms))
-
-    classTest_set = ClassDataset(root='./MNIST_classTest', test_set=test_set, seed=validation_seed,
-                                       transform=torchvision.transforms.Compose(transforms))
 
     # load the datasets
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batchSize, shuffle=True)
-    validation_loader = torch.utils.data.DataLoader(validation_set, batch_size=batchSizeTest, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batchSizeTest, shuffle=True)
-    classValidation_loader = torch.utils.data.DataLoader(classValidation_set, batch_size=300, shuffle=True)
-    classTest_loader = torch.utils.data.DataLoader(classTest_set, batch_size=700, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(validation_set, batch_size=batchSizeTest, shuffle=True)
+    class_loader = torch.utils.data.DataLoader(class_set, batch_size=1000, shuffle=True)
 
-    return train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader
+    return train_loader, test_loader, class_loader
 
 
 def returnYinYang(batchSize, batchSizeTest=128):
@@ -182,20 +175,20 @@ def returnYinYang(batchSize, batchSizeTest=128):
         train_set = YinYangDataset(size=5000, seed=42)
 
     validation_set = YinYangDataset(size=1000, seed=41)  # used for the hyperparameter research
-    classValidation_set = YinYangDataset(size=1000, seed=41, sub_class=True)
+    class_set = YinYangDataset(size=1000, seed=41, sub_class=True)
 
-    test_set = YinYangDataset(size=1000, seed=40)
-    classTest_set = YinYangDataset(size=1000, seed=40, sub_class=True)
+    # test_set = YinYangDataset(size=1000, seed=40)
+    # classTest_set = YinYangDataset(size=1000, seed=40, sub_class=True)
 
     # seperate the dataset
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batchSize, shuffle=True)
     validation_loader = torch.utils.data.DataLoader(validation_set, batch_size=batchSize, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batchSizeTest, shuffle=False)
+    # test_loader = torch.utils.data.DataLoader(test_set, batch_size=batchSizeTest, shuffle=False)
+    # classTest_loader = torch.utils.data.DataLoader(classTest_set, batch_size=100, shuffle=False)
 
-    classValidation_loader = torch.utils.data.DataLoader(classValidation_set, batch_size=100, shuffle=False)
-    classTest_loader = torch.utils.data.DataLoader(classTest_set, batch_size=100, shuffle=False)
+    class_loader = torch.utils.data.DataLoader(class_set, batch_size=100, shuffle=False)
 
-    return train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader
+    return train_loader, validation_loader, class_loader
 
 
 def argsCreate(exp_args, batchSize, T, Kmax, beta, lr, Optimizer, errorEstimate, lossFunction, eta, gamma, nudge_N, dropProb):
@@ -234,15 +227,14 @@ def argsCreate(exp_args, batchSize, T, Kmax, beta, lr, Optimizer, errorEstimate,
     return args
 
 
-def train_validation_test(args, net, trial, train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader):
-
+def train_validation_test(args, net, trial, train_loader, validation_loader, class_loader):
 
     # train the model
     if exp_args.action == 'supervised_ep':
         print("Training the model with supervised ep")
 
         for epoch in tqdm(range(exp_args.epochs)):
-            if args.lossFucntion == 'MSE':
+            if args.lossFunction == 'MSE':
                 train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
             elif args.lossFunction == 'Cross-entropy':
                 train_error_epoch = train_supervised_crossEntropy(net, args, train_loader, epoch)
@@ -253,8 +245,8 @@ def train_validation_test(args, net, trial, train_loader, validation_loader, tes
             trial.report(validation_error_epoch, epoch)
             if trial.should_prune():
                 raise optuna.TrialPruned()
-        test_error = test_supervised_ep(net, args, test_loader)
-        return test_error
+
+        return validation_error_epoch
 
     elif args.action == 'unsupervised_ep':
         print("Training the model with unsupervised ep")
@@ -263,7 +255,7 @@ def train_validation_test(args, net, trial, train_loader, validation_loader, tes
             # train process
             Xth = train_unsupervised_ep(net, args, train_loader, epoch)
             # class process
-            response, max0_indice = classify(net, args, classValidation_loader)
+            response, max0_indice = classify(net, args, class_loader)
             # test process
             error_av_epoch, error_max_epoch = test_unsupervised_ep(net, args, validation_loader, response)
 
@@ -272,36 +264,56 @@ def train_validation_test(args, net, trial, train_loader, validation_loader, tes
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        response, max0_indice = classify(net, args, classTest_loader)
-        error_av, error_max = test_unsupervised_ep(net, args, test_loader, response)
-        return error_av
+        return error_av_epoch
 
 
 def objective(trial, exp_args):
 
     # design the hyperparameters to be optimized
-    batchSize = trial.suggest_int("batchSize", 10, 128)
-    T = trial.suggest_categorical("T", [20, 30, 40])
-    Kmax = trial.suggest_categorical("Kmax", [5, 10, 15])
-    beta = trial.suggest_float("beta", 0.1, 0.5)
+    if exp_args.Homeo_mode == 'SM' and exp_args.action == 'unsupervised_ep':
+        batchSize = 1
+    else:
+        batchSize = trial.suggest_int("batchSize", 10, 256)
+    #T = trial.suggest_categorical("T", [15, 20, 25])
+    T = 40
+    #Kmax = trial.suggest_categorical("Kmax", [5, 10])
+    Kmax = 15
+    beta = trial.suggest_float("beta", 0.05, 0.5)
     lr1 = trial.suggest_float("lr1", 1e-5, 0.1, log=True)
-    lr_coeff = trial.suggest_float("lr_coeff", 0.5, 4)
-    lr = [lr1, lr_coeff*lr1]
+
+    if len(exp_args.structure) == 2:
+        lr = [lr1]
+    else:
+        lr_coeff = trial.suggest_float("lr_coeff", 0.1, 5)
+        lr = [lr_coeff*lr1, lr1]
+
     Optimizer = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
     errorEstimate = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
-    lossFunction = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
 
+    # Optimizer = 'Adam'
+    # errorEstimate = 'symmetric'
+    # lossFunction = 'Cross-entropy'
     if exp_args.action == 'supervised_ep':
         eta = 0.6
-        gamma=0.8
-        nudge_N=1
+        gamma = 0.8
+        nudge_N = 1
+        lossFunction = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
     else:
-        eta = trial.suggest_float("eta", 0.001, 1, log=True)
         gamma = trial.suggest_float("gamma", 0.001, 1, log=True)
-        nudge_N = trial.suggest_int("nudge_N", 1, 6)
+        # TODO change the nudging number
+        nudge_N = trial.suggest_int("nudge_N", 1, exp_args.exp_N)
+        lossFunction = 'MSE'
+        if exp_args.Homeo_mode == 'batch':
+            eta = 0.6
+        else:
+            eta = trial.suggest_float("eta", 0.001, 1, log=True)
+    if exp_args.dataset == 'mnist':
+        class_seed = trial.suggest_int("class_seed", 1, 9)
+    else:
+        class_seed = 1
 
-    if exp_args.dataset =='YinYang':
-        dropProb=[0,0]
+    if exp_args.dataset == 'YinYang' or exp_args.Dropout == 0:
+        dropProb = [0, 0]
     else:
         drop1 = trial.suggest_float("drop1", 0.05, 0.4)
         drop2 = trial.suggest_float("drop2", 0.05, 0.5)
@@ -314,18 +326,17 @@ def objective(trial, exp_args):
     args.dropProb.reverse()
 
     # create the dataset
-    if exp_args.dataset=='YinYang':
-        train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader=\
+    if exp_args.dataset == 'YinYang':
+        train_loader, validation_loader,  class_loader=\
             returnYinYang(batchSize, batchSizeTest=exp_args.test_batchSize)
-    elif exp_args.dataset == 'MNIST':
-        train_loader, validation_loader, test_loader, classValidation_loader, classTest_loader=\
-            returnMNIST(batchSize, batchSizeTest=exp_args.test_batchSize)
+    elif exp_args.dataset == 'mnist':
+        train_loader,  validation_loader, class_loader=\
+            returnMNIST(class_seed, batchSize, batchSizeTest=exp_args.test_batchSize)
 
     # create the model
     net = torch.jit.script(MlpEP(args))
     # training process
-    final_err = train_validation_test(args, net, trial, train_loader, validation_loader, test_loader, classValidation_loader,
-                          classTest_loader)
+    final_err = train_validation_test(args, net, trial, train_loader, validation_loader, class_loader)
 
     return final_err
 
@@ -463,18 +474,21 @@ if __name__=='__main__':
     # define Pruner
 
     # define the dataframe
-    BASE_PATH, name = optuna_createPath(exp_args)
+    BASE_PATH, name = optuna_createPath()
     # save hyperparameters
     saveHyperparameters(exp_args, BASE_PATH)
     # create the filepath for saving the optuna trails
     filePath = BASE_PATH + prefix + "test.csv"
-
-    study = optuna.create_study()
-    study.optimize(lambda trial: objective(trial, exp_args), n_trials=300)
+    study_name = str(time.asctime())
+    study = optuna.create_study(study_name=study_name, storage='sqlite:///example.db')
+    study.optimize(lambda trial: objective(trial, exp_args), n_trials=100)
     trails = study.get_trials()
     # record trials
     df = study.trials_dataframe()
     df.to_csv(filePath)
+    optuna.visualization.plot_param_importances(study)
+    optuna.visualization.plot_optimization_history(study)
+    optuna.visualization.plot_slice(study)
 
     #np.savetxt(BASE_PATH + prefix + "test.csv", trails, delimiter=",", fmt='%s')
     #np.savetxt(BASE_PATH+"test.csv", trails, delimiter=",", fmt='%s', header=header)

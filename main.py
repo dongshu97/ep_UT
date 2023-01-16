@@ -30,23 +30,30 @@ parser.add_argument(
 parser.add_argument(
     '--dataset',
     type=str,
-    default="YinYang",
+    default="mnist",
     help='dataset to be used to train the network : (default = mnist)')
+# TODO
+parser.add_argument(
+    '--training-method',
+    type=str,
+    default='ep',
+    help='traning method (default:ep)'
+)
 parser.add_argument(
     '--action',
     type=str,
-    default="supervised_ep",
+    default="unsupervised_ep",
     help='train or test: (default = unsupervised_ep, other: supervised_ep, test, visu')
 parser.add_argument(
     '--epochs',
     type=int,
-    default=100,
+    default=20,
     metavar='N',
     help='number of epochs to train (default: 100)')
 parser.add_argument(
     '--batchSize',
     type=int,
-    default=28,
+    default=67,
     help='Batch size (default=128)')
 parser.add_argument(
     '--test_batchSize',
@@ -61,17 +68,17 @@ parser.add_argument(
 parser.add_argument(
     '--T',
     type=int,
-    default=40,
+    default=60,
     help='number of time steps in the free phase (default: 40) - Let the system relax with oscillators dynamics')
 parser.add_argument(
     '--Kmax',
     type=int,
-    default=15,
+    default=20,
     help='number of time steps in the backward pass (default: 50)')
 parser.add_argument(
     '--beta',
     type=float,
-    default=0.37,
+    default=0.5,
     metavar='BETA',
     help='nudging parameter (default: 0.5)')
 parser.add_argument(
@@ -91,17 +98,42 @@ parser.add_argument(
     type=int,
     default=[1, 16, 5, 1, 1, 16, 32, 5, 1, 1],
     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
+# TODO rewrite the argparse for the CNN
+# we suppose the stride=1
+parser.add_argument(
+    '--C_list',
+    nargs = '+',
+    type=int,
+    default=[],
+    help='channel list (default: [])')
+parser.add_argument(
+    '--padding',
+    type=int,
+    default=0,
+    help='padding or not (default: 0, else:1)')
+parser.add_argument(
+    '--convF',
+    type=int,
+    default=5,
+    metavar='F',
+    help='convolution filter size (default: 5)')
+parser.add_argument(
+    '--Fpool',
+    type=int,
+    default=2,
+    metavar='Fp',
+    help='pooling filter size (default: 2)')
 parser.add_argument(
     '--fcLayers',
     nargs='+',
     type=int,
-    default=[4, 30, 3],
+    default=[784, 512, 500],
     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
 parser.add_argument(
     '--lr',
     nargs='+',
     type=float,
-    default=[0.01, 0.01],
+    default=[0.02, 0.02],
     help='learning rates')
 parser.add_argument(
     '--activation_function',
@@ -135,13 +167,13 @@ parser.add_argument(
 parser.add_argument(
     '--gamma',
     type=float,
-    default=0.518,
+    default=0.584,
     help='the coefficient for regulating the homeostasis effect (default: 0.2)'
 )
 parser.add_argument(
     '--nudge_N',
     type=int,
-    default=1,
+    default=4,
     help='the number of winners to be nudged (default: 1)'
 )
 parser.add_argument(
@@ -184,8 +216,14 @@ parser.add_argument(
     '--dropProb',
     nargs='+',
     type=float,
-    default=[0.2, 0.4],
+    default=[0, 0],
     help='to decide the probability of dropout'
+)
+parser.add_argument(
+    '--torchSeed',
+    type=int,
+    default=0,
+    help='to generate the reproductive result'
 )
 parser.add_argument(
     '--analysis_preTrain',
@@ -221,6 +259,10 @@ parser.add_argument(
 )
 # input the args
 args = parser.parse_args()
+
+# define the torchSeed
+if args.torchSeed:
+    torch.manual_seed(args.torchSeed)
 
 # define the two batch sizes
 batch_size = args.batchSize
@@ -288,7 +330,7 @@ if args.dataset == 'mnist':
 
 
     # define the class dataset
-    seed = 1
+    seed = 2  # other possible seed seed=7, seed=8, seed=9
 
     # TODO this part can use the same method as data-split of semi-supervised learning
     # or TODO this separation by torch.utils.data.Subset(dataset, indices)
@@ -308,7 +350,7 @@ elif args.dataset == 'YinYang':
     else:
         if args.action == 'supervised_ep':
             train_set = YinYangDataset(size=5000, seed=42, target_transform=ReshapeTransformTarget(3))
-        elif args.action == 'unsupervised_ep' or args.action == 'test' or args.action=='visu':
+        elif args.action == 'unsupervised_ep' or args.action == 'test' or args.action == 'visu':
             train_set = YinYangDataset(size=5000, seed=42)
 
         #validation_set = YinYangDataset(size=1000, seed=41)  # used for the hyperparameter research
@@ -359,10 +401,10 @@ elif args.activation_function == 'relu':
     def rhop(x):
         return (x>=0)
 
-
 if __name__ == '__main__':
 
     args.fcLayers.reverse()  # we put in the other side, output first, input last
+    args.C_list.reverse()  # we reverse also the list of channels
     args.lr.reverse()
     args.display.reverse()
     args.imShape.reverse()
@@ -450,7 +492,7 @@ if __name__ == '__main__':
         test_error_list = []
 
         for epoch in tqdm(range(args.epochs)):
-            if args.lossFunction=='MSE':
+            if args.lossFunction == 'MSE':
                 train_error_epoch = train_supervised_ep(net, args, train_loader, epoch)
             elif args.lossFunction == 'Cross-entropy':
                 train_error_epoch = train_supervised_crossEntropy(net, args, train_loader, epoch)
@@ -478,7 +520,6 @@ if __name__ == '__main__':
         # dataframe for Xth
         Xth_dataframe = initXthframe(BASE_PATH, 'Xth_norm.csv')
 
-
         # save the initial network
         torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
 
@@ -493,7 +534,10 @@ if __name__ == '__main__':
         for epoch in tqdm(range(args.epochs)):
 
             # train process
-            Xth = train_unsupervised_ep(net, args, train_loader, epoch)
+            if args.lossFunction == 'MSE':
+                Xth = train_unsupervised_ep(net, args, train_loader, epoch)
+            elif args.lossFunction == 'Cross-entropy':
+                Xth = train_unsupervised_crossEntropy(net, args, train_loader, epoch)
 
             # elif args.Optimizer == 'Adam':
             #     Xth, mW, vW, mBias, vBias = train_unsupervised_ep(net, args, train_loader, epoch, Xth, mW, vW, mBias, vBias)
@@ -537,6 +581,23 @@ if __name__ == '__main__':
         response, max0_indice = classify(net, args, class_loader)
         error_av_epoch, error_max_epoch = test_unsupervised_ep(net, args, test_loader, response)
 
+    if args.dataset == 'YinYang':
+    # TODO visualize the YinYang separation result
+        print('we print the classification results for the YinYang dataset')
+        # create the visualization dossier
+        path_YinYang = pathlib.Path(BASE_PATH + prefix + 'YinYang_visu')
+        path_YinYang.mkdir(parents=True, exist_ok=True)
+
+        if args.action == 'supervised_ep':
+            test_error_final, test_class_record = test_supervised_ep(net, args, test_loader, record=1)
+        elif args.action == 'unsupervised_ep':
+            # class process
+            response, max0_indice = classify(net, args, class_loader)
+
+            # test process
+            error_av_final, error_max_epoch_final, av_record, max_record = test_unsupervised_ep(net, args, test_loader, response, record=1)
+
+        visu_YinYang_result(av_record.cpu(), test_set.vals, path_YinYang, prefix)
     if args.imWeights:
         # create the imShow dossier
         path_imshow = pathlib.Path(BASE_PATH + prefix + 'imShow')

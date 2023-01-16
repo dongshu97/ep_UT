@@ -15,7 +15,7 @@ import pickle
 import pandas as pd
 import shutil
 from tqdm import tqdm
-
+import torch.nn.functional as F
 from Network import*
 
 
@@ -93,6 +93,7 @@ def train_supervised_crossEntropy(net,args, train_loader, epoch):
             h, y = net.forward_softmax(h)
             heq = h.copy()
             yeq = y.clone()
+            # nudging phase
             if len(h) > 1:
                 h, y = net.forward_softmax(h, target=targets, beta=net.beta)
             # update the weights
@@ -192,7 +193,98 @@ def train_supervised_ep(net, args, train_loader, epoch):
     return train_error
 
 
-def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mBias=[0,0], vBias=[0,0]):
+def train_unsupervised_crossEntropy(net, args, train_loader, epoch):
+    net.train()
+    net.epoch = epoch + 1
+
+    # Stochastic mode
+    if args.batchSize == 1:
+        Y_p = torch.zeros(args.fcLayers[0], device=net.device)
+
+    Xth = torch.zeros(args.fcLayers[0], device=net.device)
+    # Decide the decreasing gamma
+    if net.epoch % args.epochDecay == 0:
+        net.gamma = net.gamma*args.gammaDecay
+
+    # decide the factor
+    T_coef = 0.002
+    target_activity = args.nudge_N / args.fcLayers[0]
+
+    for batch_idx, (data, targets) in enumerate(train_loader):
+
+        # random signed beta: better approximate the gradient
+        net.beta = torch.sign(torch.randn(1)) * args.beta
+        # init the hidden layers
+        h = net.initHidden(args.fcLayers, data)
+
+        if net.cuda:
+            targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
+            net.beta = net.beta.to(net.device)
+            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+
+        if args.errorEstimate == 'one-sided':
+            # free phase
+            h, y = net.forward_softmax(h)
+            heq = h.copy()
+            yeq = y.clone()
+            # # define the targets by creating a new softmax function
+            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
+            # define the targets by argmax
+            unsupervised_targets, maxindex = net.unsupervised_target(yeq, args.nudge_N, Xth)
+            # nudging phase
+            if len(h) > 1:
+                h, y = net.forward_softmax(h, target=unsupervised_targets, beta=net.beta)
+
+            # update the weights
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight_softmax(h, heq, y, unsupervised_targets, epoch=net.epoch)
+            else:
+                net.updateWeight_softmax(h, heq, y, unsupervised_targets)
+
+        elif args.errorEstimate == 'symmetric':
+            if len(h) <= 1:
+                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
+            # free phase
+            h, y = net.forward_softmax(h)
+            heq = h.copy()
+            yeq = y.clone()
+            # # define the unsupervised targets
+            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
+            # define the unsupervised targets by argmax
+            unsupervised_targets, maxindex = net.unsupervised_target(yeq, args.nudge_N, Xth)
+            # + beta
+            h, y = net.forward_softmax(h, target=unsupervised_targets, beta=net.beta)
+            hplus = h.copy()
+            yplus = y.clone()
+            # -beta
+            h = heq.copy()
+            h, y = net.forward_softmax(h, target=unsupervised_targets, beta=-net.beta)
+            hmoins = h.copy()
+            ymoins = y.clone()
+        # update and track the weights of the network
+            if args.Optimizer == 'Adam':
+                net.Adam_updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, ybeta=ymoins, epoch=net.epoch)
+            else:
+                net.updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, ybeta=ymoins)
+        # calculate the Homeostasis
+        # nudge_sign = torch.sign(unsupervised_targets-yeq)
+        # A = torch.max(nudge_sign, torch.zeros(nudge_sign.size(), device=net.device))
+
+        # if args.batchSize == 1:
+        #     Y_p = (1 - args.eta) * Y_p + args.eta * A[0]
+        #     Xth += net.gamma * (Y_p - target_activity)
+        # else:
+        #     Xth += net.gamma * (torch.mean(A, axis=0) - target_activity)
+        if args.batchSize == 1:
+            Y_p = (1 - args.eta) * Y_p + args.eta * unsupervised_targets[0]
+            Xth += net.gamma * (Y_p - target_activity)
+        else:
+            Xth += net.gamma * (torch.mean(unsupervised_targets, axis=0) - target_activity)
+
+    return Xth
+
+
+def train_unsupervised_ep(net, args, train_loader, epoch):
     '''
     Function to train the network for 1 epoch
     '''
@@ -207,11 +299,7 @@ def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mB
     if net.epoch % args.epochDecay == 0:
         net.gamma = net.gamma*args.gammaDecay
 
-    # if args.Dropout:
-    #     myDropout = Dropout()
-
     for batch_idx, (data, targets) in enumerate(train_loader):
-
         #random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * args.beta
 
@@ -268,8 +356,9 @@ def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mB
         #     mW, vW, mBias, vBias = net.updateWeight(s, seq, epoch+1, mW, vW, mBias, vBias, args.lr)
 
         # update homeostasis term Xth
-        target_activity = args.nudge_N / (args.fcLayers[0]*(1-args.dropProb[0]))
+
         if args.Dropout:
+            target_activity = args.nudge_N / (args.fcLayers[0] * (1 - args.dropProb[0]))
             if args.batchSize == 1:
                 Y_p = (1 - args.eta) * Y_p + args.eta * unsupervised_targets[0]
 
@@ -278,6 +367,7 @@ def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mB
                 Xth += net.gamma * ((torch.sum(unsupervised_targets, axis=0)/torch.sum(p_distribut[0], axis=0)) -target_activity)
 
         else:
+            target_activity = args.nudge_N / args.fcLayers[0]
             if args.batchSize == 1:
                 Y_p = (1 - args.eta) * Y_p + args.eta * unsupervised_targets[0]
                 Xth += net.gamma * (Y_p - target_activity)
@@ -289,7 +379,7 @@ def train_unsupervised_ep(net, args, train_loader, epoch, mW=[0,0], vW=[0,0], mB
     return Xth
 
 
-def test_unsupervised_ep(net, args, test_loader, response):
+def test_unsupervised_ep(net, args, test_loader, response, record=None):
     '''
         Function to test the network
         '''
@@ -303,6 +393,7 @@ def test_unsupervised_ep(net, args, test_loader, response):
     # record unsupervised test error
     correct_av_test = torch.zeros(1, device=net.device).squeeze()
     correct_max_test = torch.zeros(1, device=net.device).squeeze()
+
 
     for batch_idx, (data, targets) in enumerate(test_loader):
 
@@ -344,14 +435,26 @@ def test_unsupervised_ep(net, args, test_loader, response):
         predict_max = response[maxindex_output]
         correct_max_test += (predict_max == targets).sum().float()
 
+        '''record the average and max classification'''
+        if record is not None:
+            if batch_idx == 0:
+                av_record = predict_av
+                max_record = predict_max
+            else:
+                av_record = torch.cat((av_record, predict_av), 0)
+                max_record = torch.cat((max_record, predict_max), 0)
+
     # calculate the test error
     test_error_av = 1 - correct_av_test / total_test
     test_error_max = 1 - correct_max_test / total_test
 
-    return test_error_av, test_error_max
+    if record is not None:
+        return test_error_av, test_error_max, av_record, max_record
+    else:
+        return test_error_av, test_error_max
 
 
-def test_supervised_ep(net, args, test_loader):
+def test_supervised_ep(net, args, test_loader, record=None):
     '''
     Function to test the network
     '''
@@ -361,7 +464,6 @@ def test_supervised_ep(net, args, test_loader):
 
     # record total test number
     total_test = torch.zeros(1, device=net.device).squeeze()
-
 
     # record supervised test error
     corrects_supervised = torch.zeros(1, device=net.device).squeeze()
@@ -388,8 +490,18 @@ def test_supervised_ep(net, args, test_loader):
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()
 
+        if record is not None:
+            if batch_idx == 0:
+                test_class_record = prediction
+            else:
+                test_class_record = torch.cat((test_class_record, prediction), 0)
+
     test_error = 1 - corrects_supervised / total_test
-    return test_error
+
+    if record is not None:
+        return test_error, test_class_record
+    else:
+        return test_error
 
 
 def initDataframe(path, args, net, method='supervised', dataframe_to_init = 'results.csv'):

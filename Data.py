@@ -60,8 +60,8 @@ class YinYangDataset(Dataset):
         self.target_transform = target_transform
         self.r_small = r_small
         self.r_big = r_big
-        self.__vals = [] # private data
-        self.__cs = []
+        self.vals = [] # private data
+        self.cs = []
         self.class_names = ['yin', 'yang', 'dot']
         for i in range(size):
             # keep num of class instances balanced by using rejection sampling
@@ -72,14 +72,14 @@ class YinYangDataset(Dataset):
             x_flipped = 1. - x
             y_flipped = 1. - y
             val = np.array([x, y, x_flipped, y_flipped])
-            self.__vals.append(val)
-            self.__cs.append(c)
+            self.vals.append(val)
+            self.cs.append(c)
         if sub_class:
             class_data, remain_data, \
-            class_target, remain_target = train_test_split(self.__vals, self.__cs, test_size=0.9,
-                                                           random_state=seed, stratify=self.__cs)
-            self.__vals = class_data
-            self.__cs = class_target
+            class_target, remain_target = train_test_split(self.vals, self.cs, test_size=0.9,
+                                                           random_state=seed, stratify=self.cs)
+            self.vals = class_data
+            self.cs = class_target
 
     def get_sample(self, goal=None):
         # sample until goal is satisfied
@@ -118,9 +118,9 @@ class YinYangDataset(Dataset):
         return np.sqrt((x - 0.5 * self.r_big)**2 + (y - self.r_big)**2)
 
     def __getitem__(self, index):
-        data = self.__vals[index].copy()
-        target = self.__cs[index]
-        #sample = (self.__vals[index].copy(), self.__cs[index])
+        data = self.vals[index].copy()
+        target = self.cs[index]
+        #sample = (self.vals[index].copy(), self.cs[index])
         if self.transform:
             data = self.transform(data)
         if self.target_transform:
@@ -131,7 +131,7 @@ class YinYangDataset(Dataset):
         return sample
 
     def __len__(self):
-        return len(self.__cs)
+        return len(self.cs)
 
 
 class ClassDataset(Dataset):
