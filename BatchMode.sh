@@ -1,0 +1,8 @@
+# output=500 perceptron
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4

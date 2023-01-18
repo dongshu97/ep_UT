@@ -42,18 +42,18 @@ parser.add_argument(
 parser.add_argument(
     '--action',
     type=str,
-    default="unsupervised_ep",
+    default="supervised_ep",
     help='train or test: (default = unsupervised_ep, other: supervised_ep, test, visu')
 parser.add_argument(
     '--epochs',
     type=int,
-    default=20,
+    default=10,
     metavar='N',
     help='number of epochs to train (default: 100)')
 parser.add_argument(
     '--batchSize',
     type=int,
-    default=67,
+    default=256,
     help='Batch size (default=128)')
 parser.add_argument(
     '--test_batchSize',
@@ -68,17 +68,17 @@ parser.add_argument(
 parser.add_argument(
     '--T',
     type=int,
-    default=60,
+    default=100,
     help='number of time steps in the free phase (default: 40) - Let the system relax with oscillators dynamics')
 parser.add_argument(
     '--Kmax',
     type=int,
-    default=20,
+    default=10,
     help='number of time steps in the backward pass (default: 50)')
 parser.add_argument(
     '--beta',
     type=float,
-    default=0.5,
+    default=0.4,
     metavar='BETA',
     help='nudging parameter (default: 0.5)')
 parser.add_argument(
@@ -89,27 +89,27 @@ parser.add_argument(
 parser.add_argument(
     '--convNet',
     type=int,
-    default=0,
+    default=1,
     help='whether use the convolutional layers'
 )
-parser.add_argument(
-    '--convLayers',
-    nargs='+',
-    type=int,
-    default=[1, 16, 5, 1, 1, 16, 32, 5, 1, 1],
-    help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
+# parser.add_argument(
+#     '--convLayers',
+#     nargs='+',
+#     type=int,
+#     default=[1, 16, 5, 1, 1, 16, 32, 5, 1, 1],
+#     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
 # TODO rewrite the argparse for the CNN
 # we suppose the stride=1
 parser.add_argument(
     '--C_list',
-    nargs = '+',
+    nargs='+',
     type=int,
-    default=[],
+    default=[1,32,64],
     help='channel list (default: [])')
 parser.add_argument(
     '--padding',
     type=int,
-    default=0,
+    default=1,
     help='padding or not (default: 0, else:1)')
 parser.add_argument(
     '--convF',
@@ -127,13 +127,13 @@ parser.add_argument(
     '--fcLayers',
     nargs='+',
     type=int,
-    default=[784, 512, 500],
+    default=[10],
     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
 parser.add_argument(
     '--lr',
     nargs='+',
     type=float,
-    default=[0.02, 0.02],
+    default=[0.15, 0.035, 0.015],
     help='learning rates')
 parser.add_argument(
     '--activation_function',
@@ -402,7 +402,6 @@ elif args.activation_function == 'relu':
         return (x>=0)
 
 if __name__ == '__main__':
-
     args.fcLayers.reverse()  # we put in the other side, output first, input last
     args.C_list.reverse()  # we reverse also the list of channels
     args.lr.reverse()

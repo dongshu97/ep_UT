@@ -502,7 +502,6 @@ class MlpEP(jit.ScriptModule):
 #
 #         return p_distribut
 
-
 class ConvEP(nn.Module):
     '''
     Define the network studied
@@ -518,6 +517,7 @@ class ConvEP(nn.Module):
         self.beta = torch.tensor(args.beta)
         self.clamped = args.clamped
         self.lr = args.lr
+        self.errorEstimate = args.errorEstimate
 
         if args.dataset == 'mnist':
             input_size = 28
@@ -531,7 +531,7 @@ class ConvEP(nn.Module):
 
         # define padding size:
         if args.padding:
-            pad = int((args.F - 1)/2)
+            pad = int((args.convF - 1)/2)
         else:
             pad = 0
 
@@ -554,9 +554,9 @@ class ConvEP(nn.Module):
         # define the convolutional layer
         with torch.no_grad():
             for i in range(self.conv_number):
-                Conv.extend([nn.Conv2d(args.C_list[i+1], args.C_list[i], args.convF, bias=True)])
+                Conv.extend([nn.Conv2d(args.C_list[i+1], args.C_list[i], args.convF, padding=pad, bias=True)])
                 #  in default, we use introduce the bias
-                size_conv_list.append(size_conv_list[i] - args.convF + 1 + 2*pad)  # calculate the output size
+                size_conv_list.append(size_convpool_list[i] - args.convF + 1 + 2*pad)  # calculate the output size
                 size_convpool_list.append(int(np.floor((size_convpool_list[i] - args.convF + 1 + 2*pad - args.Fpool)/args.Fpool + 1)))  # the size after the pooling layer
 
         self.Conv = Conv
@@ -569,14 +569,13 @@ class ConvEP(nn.Module):
 
         # define the fully connected layer
         fcLayers = list(args.fcLayers)
-        fcLayers.append(args.C_tab[0]*size_convpool_list[0]**2)
+        fcLayers.append(args.C_list[0]*size_convpool_list[0]**2)
         self.fcLayers = fcLayers
         self.fc_number = len(self.fcLayers) - 1
-
         self.W = nn.ModuleList(None)
         with torch.no_grad():
             for i in range(self.fc_number):
-                self.W.extend([nn.Linear(args.fcLayers[i + 1], args.fcLayers[i], bias=True)])
+                self.W.extend([nn.Linear(fcLayers[i + 1], fcLayers[i], bias=True)])
                 # torch.nn.init.zeros_(self.W[i].bias)
 
 
@@ -619,11 +618,11 @@ class ConvEP(nn.Module):
         self.device = device
         self = self.to(device)
 
-    def stepper_p_conv(self, s, data, P_ind, target=None, beta=0, return_derivatives = False):
+    def stepper_p_conv(self, s, data, P_ind, target=None, beta=0, return_derivatives=False):
         '''
         stepper function for prototypical convolutional model of EP
         '''
-
+        data = data.float()
         dsdt = []
 
         # fully connected layer (classifier part)
@@ -663,7 +662,7 @@ class ConvEP(nn.Module):
             output_size = [s[-2].size(0), s[-2].size(1), self.size_conv_list[-3], self.size_conv_list[-3]]
             s_unpool = F.conv_transpose2d(self.unpool(s[-2], P_ind[-2], output_size=output_size),
                                           weight=self.Conv[-2].weight, padding=self.pad)
-            dsdt.append(-s[1] + rho(s_pool + s_unpool))
+            dsdt.append(-s[-1] + rho(s_pool + s_unpool))
             del s_pool, s_unpool, ind, output_size
 
         for i in range(len(s)):
@@ -750,6 +749,8 @@ class ConvEP(nn.Module):
     def computeConvGradientEP(self, data, s, seq, P_ind, Peq_ind):
         batch_size = s[0].size(0)
         coef = 1 / (self.beta * batch_size)
+        if self.errorEstimate == 'symmetric':
+            coef = coef*0.5
 
         gradW_fc, gradBias_fc = [], []
         gradW_conv, gradBias_conv = [], []
@@ -778,11 +779,11 @@ class ConvEP(nn.Module):
                 output_size = [s[self.fc_number+i].size(0), s[self.fc_number+i].size(1), self.size_conv_list[i], self.size_conv_list[i]]
 
                 gradW_conv.append(coef*(F.conv2d(s[self.fc_number + i + 1].permute(1,0,2,3),
-                                                 self.unpool(s[self.fc_number + i], P_ind[self.fc_number + i], output_size=output_size).permute(1,0,2,3), padding=self.pad)
+                                                 self.unpool(s[self.fc_number + i], P_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)
                                         - F.conv2d(seq[self.fc_number + i + 1].permute(1,0,2,3),
-                                                   self.unpool(seq[self.fc_number+i], Peq_ind[self.fc_number+i], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1, 0, 2, 3))
-                gradBias_conv.append(coef*(self.unpool(s[self.fc_number+i], P_ind[self.fc_number+i], output_size=output_size) -
-                                           self.unpool(seq[self.fc_number+i], Peq_ind[self.fc_number+i], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[self.fc_number+i].size(1), -1).sum(1))
+                                                   self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1, 0, 2, 3))
+                gradBias_conv.append(coef*(self.unpool(s[self.fc_number+i], P_ind[i], output_size=output_size) -
+                                           self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[self.fc_number+i].size(1), -1).sum(1))
 
                 # gradconv_bias.append((1 / (beta * batch_size)) * (
                 #         self.unpool(s[self.nc + i], inds[self.nc + i], output_size=output_size) - self.unpool(
@@ -797,21 +798,28 @@ class ConvEP(nn.Module):
 
         return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
 
+    def updateConvWeight(self, data, s, seq, P_ind, Peq_ind):
 
+        gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
 
-    def updateConvWeight(self, s, seq, h, heq, P_ind, Peq_ind):
+        lr = self.lr
 
-        gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(self, h, heq, P_ind, Peq_ind, s, seq)
+        # for i in range(len(self.fc)):
+        #     self.fc[i].weight += lr_tab[i] * gradfc[i]
+        #     self.fc[i].bias += lr_tab[i] * gradfc_bias[i]
+        # for i in range(len(self.conv)):
+        #     self.conv[i].weight += lr_tab[i + len(self.fc)] * gradconv[i]
+        #     self.conv[i].bias += lr_tab[i + len(self.fc)] * gradconv_bias[i]
 
         # TODO consider change the lr sign for the random beta sign
         with torch.no_grad():
-            for (fc, param) in enumerate(self.W):
-                param.weight.data += self.lr[fc] * gradW_fc[fc]
-                param.bias.data += self.lr[fc] * gradBias_fc[fc]
+            for (i, param) in enumerate(self.W):
+                param.weight.data += lr[i] * gradW_fc[i]
+                param.bias.data += lr[i] * gradBias_fc[i]
 
-            for (cv, param) in enumerate(self.Conv):
-                param.weight.data += self.lr[cv+self.fc_number] * gradW_conv[cv]
-                param.weight.data += self.lr[cv+self.fc_number] * gradBias_conv[cv]
+            for (i, param) in enumerate(self.Conv):
+                param.weight.data += lr[i+self.fc_number] * gradW_conv[i]
+                param.bias.data += lr[i+self.fc_number] * gradBias_conv[i]
 
     # def initState(self, args, data):
     #     '''
@@ -841,7 +849,7 @@ class ConvEP(nn.Module):
         s = []
         P_ind = []
         for i in range(self.fc_number):
-            s.append(torch.zeros(batch_size, self.size_classifier_tab[i], requires_grad=False)) # why we requires grad ? for comparison with BPTT?
+            s.append(torch.zeros(batch_size, self.fcLayers[i], requires_grad=False)) # why we requires grad ? for comparison with BPTT?
             # inds.append(None)
         for i in range(self.conv_number):
             s.append(torch.zeros(batch_size, self.C_list[i], self.size_convpool_list[i], self.size_convpool_list[i],
