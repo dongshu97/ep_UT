@@ -19,26 +19,26 @@ so whether we will merge s and h together?
 
 class MlpEP(jit.ScriptModule):
 
-    def __init__(self, args):
+    def __init__(self, jparams):
 
         super(MlpEP, self).__init__()
 
-        self.T = args.T
-        self.Kmax = args.Kmax
-        self.dt = args.dt
-        self.beta = torch.tensor(args.beta)
-        self.clamped = args.clamped
-        self.lr = args.lr
-        self.coeffDecay = args.coeffDecay
-        self.epochDecay = args.epochDecay
-        self.batchSize = args.batchSize
-        self.gamma = args.gamma
-        self.fcLayers = args.fcLayers
-        self.errorEstimate = args.errorEstimate
+        self.T = jparams['T']
+        self.Kmax = jparams['Kmax']
+        self.dt = jparams['dt']
+        self.beta = torch.tensor(jparams['beta'])
+        self.clamped = jparams['clamped']
+        self.lr = jparams['lr']
+        self.coeffDecay = jparams['coeffDecay']
+        self.epochDecay = jparams['epochDecay']
+        self.batchSize = jparams['batchSize']
+        self.fcLayers = jparams['fcLayers']
+        self.errorEstimate = jparams['errorEstimate']
+        self.randomHidden = jparams['randomHidden']
 
         # define the device
-        if args.device >= 0 and torch.cuda.is_available():
-            device = torch.device("cuda:" + str(args.device))
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
             self.cuda = True
         else:
             device = torch.device("cpu")
@@ -51,19 +51,19 @@ class MlpEP(jit.ScriptModule):
         self.m_dw, self.v_dw = [], []
         self.m_db, self.v_db = [], []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                self.m_dw.append(torch.zeros(args.fcLayers[i+1], args.fcLayers[i], device=device))
-                self.v_dw.append(torch.zeros(args.fcLayers[i+1], args.fcLayers[i], device=device))
-                self.m_db.append(torch.zeros(args.fcLayers[i], device=device))
-                self.v_db.append(torch.zeros(args.fcLayers[i], device=device))
+            for i in range(len(jparams['fcLayers'])-1):
+                self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+                self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+                self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+                self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
         self.epsillon = 1e-8
 
         # We define the list to save the weights
         W:List[torch.Tensor] = []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                w = torch.empty(args.fcLayers[i+1], args.fcLayers[i], device=device)
-                bound = 1/ np.sqrt(args.fcLayers[i+1])
+            for i in range(len(jparams['fcLayers'])-1):
+                w = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device)
+                bound = 1/ np.sqrt(jparams['fcLayers'][i+1])
                 #nn.init.xavier_uniform_(w)
                 nn.init.uniform_(w, a=-bound, b=bound)
                 W.append(w)
@@ -72,9 +72,9 @@ class MlpEP(jit.ScriptModule):
         # We define the list to save the bias
         bias:List[torch.Tensor] = []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                b = torch.empty(args.fcLayers[i], device=device)
-                bound = 1/np.sqrt(args.fcLayers[1])
+            for i in range(len(jparams['fcLayers'])-1):
+                b = torch.empty(jparams['fcLayers'][i], device=device)
+                bound = 1/np.sqrt(jparams['fcLayers'][1])
                 #nn.init.uniform_(b, a=-bound, b=bound)
                 nn.init.zeros_(b)
                 bias.append(b)
@@ -341,15 +341,21 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             #lrDecay = 0.01*np.power(0.97, epoch)
             #lrDecay = 0.01*np.power(0.5, int(epoch/10))
-            for layer in range(len(self.W)):
-                #lrDecay = self.lr[layer]
-                # TODO solve the problem of torch.pow or np.power
-                lrDecay = self.lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-                #print('the decayed lr is:', lrDecay)
-                # print('alpha is:', alpha[layer])
+            if self.randomHidden:
+                lrDecay = self.lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                self.W[0] += lrDecay*gradW[0]
+                self.bias[0] += lrDecay*gradBias[0]
+            else:
+                for layer in range(len(self.W)):
+                    #lrDecay = self.lr[layer]
+                    # TODO solve the problem of torch.pow or np.power
+                    lrDecay = self.lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                    #print('the decayed lr is:', lrDecay)
+                    # print('alpha is:', alpha[layer])
 
-                self.W[layer] += lrDecay*gradW[layer]
-                self.bias[layer] += lrDecay*gradBias[layer]
+                    self.W[layer] += lrDecay*gradW[layer]
+                    self.bias[layer] += lrDecay*gradBias[layer]
+
 
 
     @jit.script_method
@@ -452,7 +458,7 @@ class MlpEP(jit.ScriptModule):
 
         return unsupervised_targets, N_maxindex
 
-    def initState(self, fcLayers, data):
+    def initState(self, data):
         '''
         Init the state of the network
         State if a dict, each layer is state["S_layer"]
@@ -460,8 +466,8 @@ class MlpEP(jit.ScriptModule):
         '''
         state = []
         size = data.size(0)
-        for layer in range(len(fcLayers)-1):
-            state.append(torch.zeros(size, fcLayers[layer], requires_grad=False))
+        for layer in range(len(self.fcLayers)-1):
+            state.append(torch.zeros(size, self.fcLayers[layer], requires_grad=False))
 
         state.append(data.float())
 
@@ -479,10 +485,46 @@ class MlpEP(jit.ScriptModule):
         return h
 
 
+class Classlayer(nn.Module):
+    # one layer perceptron does not need to be trained by EP
+    def __init__(self, jparams):
+        super(Classlayer, self).__init__()
+        # output_neuron=args.n_class
+        self.output = jparams['n_class']
+        self.input = jparams['fcLayers'][0]
+        self.activation = jparams['class_activation']
+        # define the classification layer
+        self.class_layer = nn.Linear(self.input, self.output, bias=True)
 
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
+            self.cuda = True
+        else:
+            device = torch.device("cpu")
+            self.cuda = False
 
+        self.device = device
+        self = self.to(device)
 
-# class Dropout(nn.Module):
+    def rho(self, x, type):
+        if type == 'relu':
+            return F.relu(x)
+        elif type == 'softmax':
+            return F.softmax(x, dim=1)
+        elif type == 'x':
+            return x
+        elif type == 'sigmoid':
+            return torch.sigmoid(x)
+        elif type == 'hardsigm':
+            return torch.clamp(x, 0, 1)
+        elif type == 'tanh':
+            return 0.5+0.5*torch.tanh(x)
+
+    def forward(self, x):
+        x = self.rho(self.class_layer(x), self.activation)
+        return x
+
+    # class Dropout(nn.Module):
 #     def __init__(self, p: float = 0.5):
 #         super(Dropout, self).__init__()
 #         if p < 0 or p > 1:
@@ -507,42 +549,42 @@ class ConvEP(nn.Module):
     Define the network studied
     '''
 
-    def __init__(self, args):
+    def __init__(self, jparams):
 
         super(ConvEP, self).__init__()
 
-        self.T = args.T
-        self.Kmax = args.Kmax
-        self.dt = args.dt
-        self.beta = torch.tensor(args.beta)
-        self.clamped = args.clamped
-        self.lr = args.lr
-        self.errorEstimate = args.errorEstimate
+        self.T = jparams['T']
+        self.Kmax = jparams['Kmax']
+        self.dt = jparams['dt']
+        self.beta = torch.tensor(jparams['beta'])
+        self.clamped = jparams['clamped']
+        self.lr = jparams['lr']
+        self.errorEstimate = jparams['errorEstimate']
 
-        if args.dataset == 'mnist':
+        if jparams['dataset'] == 'mnist':
             input_size = 28
         else:
             raise ValueError("The convolutional network now is only designed for mnist dataset")
 
-        self.batchSize = args.batchSize
-        self.C_list = args.C_list
+        self.batchSize = jparams['batchSize']
+        self.C_list = jparams['C_list']
 
-        self.F = args.convF  # filter size
+        self.F = jparams['convF']  # filter size
 
         # define padding size:
-        if args.padding:
-            pad = int((args.convF - 1)/2)
+        if jparams['padding']:
+            pad = int((jparams['convF'] - 1)/2)
         else:
             pad = 0
 
         self.pad = pad
 
         # define pooling operation
-        self.pool = nn.MaxPool2d(args.Fpool, stride=args.Fpool, return_indices=True)
-        self.unpool = nn.MaxUnpool2d(args.Fpool, stride=args.Fpool)
+        self.pool = nn.MaxPool2d(jparams['Fpool'], stride=jparams['Fpool'], return_indices=True)
+        self.unpool = nn.MaxUnpool2d(jparams['Fpool'], stride=jparams['Fpool'])
 
         Conv = nn.ModuleList(None)
-        conv_number = len(args.C_list)-1
+        conv_number = len(jparams['C_list'])-1
         if conv_number < 2:
             raise ValueError("At least 2 convolutional layer should be applied")
 
@@ -554,10 +596,10 @@ class ConvEP(nn.Module):
         # define the convolutional layer
         with torch.no_grad():
             for i in range(self.conv_number):
-                Conv.extend([nn.Conv2d(args.C_list[i+1], args.C_list[i], args.convF, padding=pad, bias=True)])
+                Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=pad, bias=True)])
                 #  in default, we use introduce the bias
-                size_conv_list.append(size_convpool_list[i] - args.convF + 1 + 2*pad)  # calculate the output size
-                size_convpool_list.append(int(np.floor((size_convpool_list[i] - args.convF + 1 + 2*pad - args.Fpool)/args.Fpool + 1)))  # the size after the pooling layer
+                size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*pad)  # calculate the output size
+                size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*pad - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
 
         self.Conv = Conv
 
@@ -568,8 +610,8 @@ class ConvEP(nn.Module):
         self.size_convpool_list = size_convpool_list
 
         # define the fully connected layer
-        fcLayers = list(args.fcLayers)
-        fcLayers.append(args.C_list[0]*size_convpool_list[0]**2)
+        fcLayers = list(jparams['fcLayers'])
+        fcLayers.append(jparams['C_list'][0]*size_convpool_list[0]**2)
         self.fcLayers = fcLayers
         self.fc_number = len(self.fcLayers) - 1
         self.W = nn.ModuleList(None)
@@ -608,8 +650,8 @@ class ConvEP(nn.Module):
         #     torch.nn.init.normal_(self.W[i].bias, 0, 0.05)
 
         # put model on GPU is available and asked
-        if args.device >= 0 and torch.cuda.is_available():
-            device = torch.device("cuda:" + str(args.device))
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
             self.cuda = True
         else:
             device = torch.device("cpu")
