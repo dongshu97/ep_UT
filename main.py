@@ -1,6 +1,6 @@
 #Main for the simulation
 import os
-import argparse # this can be removed
+import argparse  # this can be removed
 import json
 import torch
 import torchvision.datasets as datasets
@@ -354,7 +354,7 @@ if jparams['dataset'] == 'mnist':
         transforms = [torchvision.transforms.ToTensor(), ReshapeTransform((-1,))]
 
     # Download the MNIST dataset
-    if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' or jparams['action']=='test':
+    if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' or jparams['action'] == 'test':
         train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                transform=torchvision.transforms.Compose(transforms))
         # # we create the dataset mixed with unlabeled and labeled data
@@ -378,18 +378,24 @@ if jparams['dataset'] == 'mnist':
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
-
     # define the class dataset
-    seed = 2  # other possible seed seed=7, seed=8, seed=9
+    seed = 42  # seed number should between 0 to 42
 
     # TODO this part can use the same method as data-split of semi-supervised learning
-    # or TODO this separation by torch.utils.data.Subset(dataset, indices)
-    class_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
-                             transform=torchvision.transforms.Compose(transforms))
+    x = train_set.data.clone().detach()
+    y = train_set.targets.clone().detach()
 
-    layer_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
-                             transform=torchvision.transforms.Compose(transforms),
+    class_set = splitClass(x, y, 0.02, seed=seed, transform=torchvision.transforms.Compose(transforms))
+    #
+    # class_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
+    #                          transform=torchvision.transforms.Compose(transforms))
+
+    layer_set = splitClass(x, y, 0.02, seed=seed, transform=torchvision.transforms.Compose(transforms),
                                  target_transform=ReshapeTransformTarget(10))
+
+    # layer_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
+    #                          transform=torchvision.transforms.Compose(transforms),
+    #                              target_transform=ReshapeTransformTarget(10))
 
     if jparams['device'] >= 0:
         class_loader = torch.utils.data.DataLoader(class_set, batch_size=1000, shuffle=True)
@@ -413,9 +419,9 @@ elif jparams['dataset'] == 'YinYang':
 
         test_set = YinYangDataset(size=1000, seed=40)
 
-        class_set = YinYangDataset(size=1000, seed=40, sub_class=True)
+        class_set = YinYangDataset(size=1000, seed=42, sub_class=True)
 
-        layer_set = YinYangDataset(size=1000, seed=40, target_transform=ReshapeTransformTarget(3), sub_class=True)
+        layer_set = YinYangDataset(size=1000, seed=42, target_transform=ReshapeTransformTarget(3), sub_class=True)
 
         # seperate the dataset
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)

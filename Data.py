@@ -134,6 +134,32 @@ class YinYangDataset(Dataset):
         return len(self.cs)
 
 
+class splitClass(Dataset):
+    def __init__(self, x, y, split_ratio, seed, transform=None, target_transform=None):
+
+        class_set_data, rest_data, \
+        class_set_targets, rest_targets = train_test_split(x, y, train_size=split_ratio, random_state=seed, stratify=y)
+
+        del(rest_data, rest_targets)
+
+        self.data = class_set_data
+        self.transform = transform
+        self.targets = class_set_targets
+        self.target_transform = target_transform
+
+    def __getitem__(self, item):
+        img, label = self.data[item].numpy(), self.targets[item].numpy()
+        img = Image.fromarray(img)
+        if self.transform is not None:
+            img = self.transform(img)
+        if self.target_transform is not None:
+            label = self.target_transform(label)
+        return img, label
+
+    def __len__(self):
+        return len(self.targets)
+
+
 class ClassDataset(Dataset):
     def __init__(self, root, test_set, seed, transform=None, target_transform=None):
 
@@ -158,52 +184,52 @@ class ClassDataset(Dataset):
         return len(self.targets)
 
 
-class ValidationDataset(Dataset):
-    # This dataset is only used for hyperparameter research
-    def __init__(self, root, rest_set, seed, transform=None, target_transform=None):
-        seedfile = 'validSeed' + str(seed) + '.txt'
-        filePath = os.path.join(root, seedfile)
-        images_indices = np.loadtxt(filePath).astype(int)
-        self.data = rest_set.data[images_indices, :]
-        self.transform = transform
-        self.targets = rest_set.targets[images_indices]
-        self.target_transform = target_transform
-
-    def __getitem__(self, item):
-        img, label = self.data[item].numpy(), self.targets[item].numpy()
-        img = Image.fromarray(img)
-        if self.transform is not None:
-            img = self.transform(img)
-        if self.target_transform is not None:
-            label = self.target_transform(label)
-        return img, label
-
-    def __len__(self):
-        return len(self.targets)
-
-
-class HypertestDataset(Dataset):
-    # This dataset is only used for hyperparameter research
-    def __init__(self, root, rest_set, seed, transform=None, target_transform=None):
-
-        seedfile = 'validSeed' + str(seed) + '.txt'
-        filePath = os.path.join(root, seedfile)
-        delete_indices = np.loadtxt(filePath).astype(int).tolist()
-        total_indices = np.arange(len(rest_set.targets))
-        images_indices = np.delete(total_indices, delete_indices)
-        self.data = rest_set.data[images_indices, :]
-        self.transform = transform
-        self.targets = rest_set.targets[images_indices]
-        self.target_transform = target_transform
-
-    def __getitem__(self, item):
-        img, label = self.data[item].numpy(), self.targets[item].numpy()
-        img = Image.fromarray(img)
-        if self.transform is not None:
-            img = self.transform(img)
-        if self.target_transform is not None:
-            label = self.target_transform(label)
-        return img, label
-
-    def __len__(self):
-        return len(self.targets)
+# class ValidationDataset(Dataset):
+#     # This dataset is only used for hyperparameter research
+#     def __init__(self, root, rest_set, seed, transform=None, target_transform=None):
+#         seedfile = 'validSeed' + str(seed) + '.txt'
+#         filePath = os.path.join(root, seedfile)
+#         images_indices = np.loadtxt(filePath).astype(int)
+#         self.data = rest_set.data[images_indices, :]
+#         self.transform = transform
+#         self.targets = rest_set.targets[images_indices]
+#         self.target_transform = target_transform
+#
+#     def __getitem__(self, item):
+#         img, label = self.data[item].numpy(), self.targets[item].numpy()
+#         img = Image.fromarray(img)
+#         if self.transform is not None:
+#             img = self.transform(img)
+#         if self.target_transform is not None:
+#             label = self.target_transform(label)
+#         return img, label
+#
+#     def __len__(self):
+#         return len(self.targets)
+#
+#
+# class HypertestDataset(Dataset):
+#     # This dataset is only used for hyperparameter research
+#     def __init__(self, root, rest_set, seed, transform=None, target_transform=None):
+#
+#         seedfile = 'validSeed' + str(seed) + '.txt'
+#         filePath = os.path.join(root, seedfile)
+#         delete_indices = np.loadtxt(filePath).astype(int).tolist()
+#         total_indices = np.arange(len(rest_set.targets))
+#         images_indices = np.delete(total_indices, delete_indices)
+#         self.data = rest_set.data[images_indices, :]
+#         self.transform = transform
+#         self.targets = rest_set.targets[images_indices]
+#         self.target_transform = target_transform
+#
+#     def __getitem__(self, item):
+#         img, label = self.data[item].numpy(), self.targets[item].numpy()
+#         img = Image.fromarray(img)
+#         if self.transform is not None:
+#             img = self.transform(img)
+#         if self.target_transform is not None:
+#             label = self.target_transform(label)
+#         return img, label
+#
+#     def __len__(self):
+#         return len(self.targets)

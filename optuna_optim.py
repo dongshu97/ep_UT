@@ -58,14 +58,15 @@ def returnMNIST(class_seed, batchSize, batchSizeTest=256):
     validation_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
                                           transform=torchvision.transforms.Compose(transforms))
 
-    # rest_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
-    #                                       transform=torchvision.transforms.Compose(transforms))
+    x = train_set.data
+    y = train_set.targets
 
-    class_set = ClassDataset(root='./MNIST_class_seed', test_set=validation_set, seed=class_seed,
-                             transform=torchvision.transforms.Compose(transforms))
-    layer_set = ClassDataset(root='./MNIST_class_seed', test_set=validation_set, seed=class_seed,
-                             transform=torchvision.transforms.Compose(transforms),
-                             target_transform=ReshapeTransformTarget(10))
+    class_set = splitClass(x, y, 0.02, seed=class_seed,
+                           transform=torchvision.transforms.Compose(transforms))
+
+    layer_set = splitClass(x, y, 0.02, seed=class_seed,
+                           transform=torchvision.transforms.Compose(transforms),
+                           target_transform=ReshapeTransformTarget(10))
 
     # load the datasets
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batchSize, shuffle=True)
@@ -81,8 +82,8 @@ def returnYinYang(batchSize, batchSizeTest=128):
 
     train_set = YinYangDataset(size=5000, seed=42, target_transform=ReshapeTransformTarget(3))
     validation_set = YinYangDataset(size=1000, seed=41)  # used for the hyperparameter research
-    class_set = YinYangDataset(size=1000, seed=41, sub_class=True)
-    layer_set = YinYangDataset(size=1000, seed=41, target_transform=ReshapeTransformTarget(3), sub_class=True)
+    class_set = YinYangDataset(size=1000, seed=42, sub_class=True)
+    layer_set = YinYangDataset(size=1000, seed=42, target_transform=ReshapeTransformTarget(3), sub_class=True)
 
     # test_set = YinYangDataset(size=1000, seed=40)
     # classTest_set = YinYangDataset(size=1000, seed=40, sub_class=True)
@@ -103,7 +104,7 @@ def jparamsCreate(pre_config, trial):
     jparams = CP.deepcopy(pre_config)
 
     if jparams["dataset"] == 'mnist':
-        jparams["class_seed"] = trial.suggest_int("class_seed", 1, 9)
+        jparams["class_seed"] = trial.suggest_int("class_seed", 0, 42)
 
     if jparams["action"]=='unsupervised_ep':
         if jparams['Homeo_mode']=='batch':
@@ -260,7 +261,7 @@ def objective(trial, pre_config):
 
     # load the trained unsupervised network when we train classification layer
     if jparams["action"] == 'class_layer':
-        with open(r'C:\Users\CNRS-THALES\OneDrive\文档\Homeostasis_python\Eqprop-unsuperivsed-MLP\DATA-0\2023-03-02\S-6\model_entire.pt','rb') as f:
+        with open(r'C:\Users\CNRS-THALES\OneDrive\文档\Homeostasis_python\Eqprop-unsuperivsed-MLP\DATA-0\2023-03-02\S-7\model_entire.pt','rb') as f:
             loaded_net = torch.jit.load(f)
         net.W = loaded_net.W.copy()
         net.bias = loaded_net.bias.copy()
