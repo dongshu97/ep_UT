@@ -19,26 +19,27 @@ so whether we will merge s and h together?
 
 class MlpEP(jit.ScriptModule):
 
-    def __init__(self, args):
+    def __init__(self, jparams):
 
         super(MlpEP, self).__init__()
 
-        self.T = args.T
-        self.Kmax = args.Kmax
-        self.dt = args.dt
-        self.beta = torch.tensor(args.beta)
-        self.clamped = args.clamped
-        self.lr = args.lr
-        self.coeffDecay = args.coeffDecay
-        self.epochDecay = args.epochDecay
-        self.batchSize = args.batchSize
-        self.gamma = args.gamma
-        self.fcLayers = args.fcLayers
-        self.errorEstimate = args.errorEstimate
+        self.T = jparams['T']
+        self.Kmax = jparams['Kmax']
+        self.dt = jparams['dt']
+        self.beta = torch.tensor(jparams['beta'])
+        self.clamped = jparams['clamped']
+        self.lr = jparams['lr']
+        self.coeffDecay = jparams['coeffDecay']
+        self.epochDecay = jparams['epochDecay']
+        self.batchSize = jparams['batchSize']
+        self.fcLayers = jparams['fcLayers']
+        self.errorEstimate = jparams['errorEstimate']
+        self.randomHidden = jparams['randomHidden']
+        self.gamma = jparams['gamma']
 
         # define the device
-        if args.device >= 0 and torch.cuda.is_available():
-            device = torch.device("cuda:" + str(args.device))
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
             self.cuda = True
         else:
             device = torch.device("cpu")
@@ -51,19 +52,19 @@ class MlpEP(jit.ScriptModule):
         self.m_dw, self.v_dw = [], []
         self.m_db, self.v_db = [], []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                self.m_dw.append(torch.zeros(args.fcLayers[i+1], args.fcLayers[i], device=device))
-                self.v_dw.append(torch.zeros(args.fcLayers[i+1], args.fcLayers[i], device=device))
-                self.m_db.append(torch.zeros(args.fcLayers[i], device=device))
-                self.v_db.append(torch.zeros(args.fcLayers[i], device=device))
+            for i in range(len(jparams['fcLayers'])-1):
+                self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+                self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+                self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+                self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
         self.epsillon = 1e-8
 
         # We define the list to save the weights
         W:List[torch.Tensor] = []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                w = torch.empty(args.fcLayers[i+1], args.fcLayers[i], device=device)
-                bound = 1/ np.sqrt(args.fcLayers[i+1])
+            for i in range(len(jparams['fcLayers'])-1):
+                w = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device)
+                bound = 1/ np.sqrt(jparams['fcLayers'][i+1])
                 #nn.init.xavier_uniform_(w)
                 nn.init.uniform_(w, a=-bound, b=bound)
                 W.append(w)
@@ -72,9 +73,9 @@ class MlpEP(jit.ScriptModule):
         # We define the list to save the bias
         bias:List[torch.Tensor] = []
         with torch.no_grad():
-            for i in range(len(args.fcLayers)-1):
-                b = torch.empty(args.fcLayers[i], device=device)
-                bound = 1/np.sqrt(args.fcLayers[1])
+            for i in range(len(jparams['fcLayers'])-1):
+                b = torch.empty(jparams['fcLayers'][i], device=device)
+                bound = 1/np.sqrt(jparams['fcLayers'][1])
                 #nn.init.uniform_(b, a=-bound, b=bound)
                 nn.init.zeros_(b)
                 bias.append(b)
@@ -341,16 +342,21 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             #lrDecay = 0.01*np.power(0.97, epoch)
             #lrDecay = 0.01*np.power(0.5, int(epoch/10))
+            if self.randomHidden:
+                lrDecay = self.lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                self.W[0] += lrDecay*gradW[0]
+                self.bias[0] += lrDecay*gradBias[0]
+            else:
+                for layer in range(len(self.W)):
+                    #lrDecay = self.lr[layer]
+                    # TODO solve the problem of torch.pow or np.power
+                    lrDecay = self.lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                    #print('the decayed lr is:', lrDecay)
+                    # print('alpha is:', alpha[layer])
 
-            for layer in range(len(self.W)):
-                #lrDecay = self.lr[layer]
-                # TODO solve the problem of torch.pow or np.power
-                lrDecay = self.lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-                #print('the decayed lr is:', lrDecay)
-                # print('alpha is:', alpha[layer])
+                    self.W[layer] += lrDecay*gradW[layer]
+                    self.bias[layer] += lrDecay*gradBias[layer]
 
-                self.W[layer] += lrDecay*gradW[layer]
-                self.bias[layer] += lrDecay*gradBias[layer]
 
 
     @jit.script_method
@@ -453,7 +459,7 @@ class MlpEP(jit.ScriptModule):
 
         return unsupervised_targets, N_maxindex
 
-    def initState(self, fcLayers, data):
+    def initState(self, data):
         '''
         Init the state of the network
         State if a dict, each layer is state["S_layer"]
@@ -461,8 +467,8 @@ class MlpEP(jit.ScriptModule):
         '''
         state = []
         size = data.size(0)
-        for layer in range(len(fcLayers)-1):
-            state.append(torch.zeros(size, fcLayers[layer], requires_grad=False))
+        for layer in range(len(self.fcLayers)-1):
+            state.append(torch.zeros(size, self.fcLayers[layer], requires_grad=False))
 
         state.append(data.float())
 
@@ -480,10 +486,46 @@ class MlpEP(jit.ScriptModule):
         return h
 
 
+class Classlayer(nn.Module):
+    # one layer perceptron does not need to be trained by EP
+    def __init__(self, jparams):
+        super(Classlayer, self).__init__()
+        # output_neuron=args.n_class
+        self.output = jparams['n_class']
+        self.input = jparams['fcLayers'][0]
+        self.activation = jparams['class_activation']
+        # define the classification layer
+        self.class_layer = nn.Linear(self.input, self.output, bias=True)
 
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
+            self.cuda = True
+        else:
+            device = torch.device("cpu")
+            self.cuda = False
 
+        self.device = device
+        self = self.to(device)
 
-# class Dropout(nn.Module):
+    def rho(self, x, type):
+        if type == 'relu':
+            return F.relu(x)
+        elif type == 'softmax':
+            return F.softmax(x, dim=1)
+        elif type == 'x':
+            return x
+        elif type == 'sigmoid':
+            return torch.sigmoid(x)
+        elif type == 'hardsigm':
+            return torch.clamp(x, 0, 1)
+        elif type == 'tanh':
+            return 0.5+0.5*torch.tanh(x)
+
+    def forward(self, x):
+        x = self.rho(self.class_layer(x), self.activation)
+        return x
+
+    # class Dropout(nn.Module):
 #     def __init__(self, p: float = 0.5):
 #         super(Dropout, self).__init__()
 #         if p < 0 or p > 1:
@@ -503,62 +545,103 @@ class MlpEP(jit.ScriptModule):
 #
 #         return p_distribut
 
-
 class ConvEP(nn.Module):
     '''
     Define the network studied
     '''
 
-    def __init__(self, args):
+    def __init__(self, jparams):
 
         super(ConvEP, self).__init__()
 
-        self.T = args.T
-        self.Kmax = args.Kmax
-        self.dt = args.dt
-        self.beta = torch.tensor(args.beta)
-        self.clamped = args.clamped
-        self.lr = args.lr
+        self.T = jparams['T']
+        self.Kmax = jparams['Kmax']
+        self.dt = jparams['dt']
+        self.beta = torch.tensor(jparams['beta'])
+        self.clamped = jparams['clamped']
+        self.lr = jparams['lr']
+        self.errorEstimate = jparams['errorEstimate']
 
-        self.batchSize = args.batchSize
+        if jparams['dataset'] == 'mnist':
+            input_size = 28
+        else:
+            raise ValueError("The convolutional network now is only designed for mnist dataset")
 
-        self.W = nn.ModuleList(None)
+        self.batchSize = jparams['batchSize']
+        self.C_list = jparams['C_list']
 
-        self.Pool = nn.MaxPool2d(2, stride=2, return_indices=True)
-        self.unPool = nn.MaxUnpool2d(2, stride=2)
+        self.F = jparams['convF']  # filter size
 
+        # define padding size:
+        if jparams['padding']:
+            pad = int((jparams['convF'] - 1)/2)
+        else:
+            pad = 0
+
+        self.pad = pad
+
+        # define pooling operation
+        self.pool = nn.MaxPool2d(jparams['Fpool'], stride=jparams['Fpool'], return_indices=True)
+        self.unpool = nn.MaxUnpool2d(jparams['Fpool'], stride=jparams['Fpool'])
+
+        Conv = nn.ModuleList(None)
+        conv_number = len(jparams['C_list'])-1
+        if conv_number < 2:
+            raise ValueError("At least 2 convolutional layer should be applied")
+
+        self.conv_number = conv_number
+        #self.P = []
+        size_conv_list = [input_size]
+        size_convpool_list = [input_size]
+
+        # define the convolutional layer
         with torch.no_grad():
-            for i in range(len(args.fcLayers) - 1):
-                self.W.extend([nn.Linear(args.fcLayers[i + 1], args.fcLayers[i], bias=True)])
+            for i in range(self.conv_number):
+                Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=pad, bias=True)])
+                #  in default, we use introduce the bias
+                size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*pad)  # calculate the output size
+                size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*pad - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
+
+        self.Conv = Conv
+
+        size_conv_list = list(reversed(size_conv_list))
+        self.size_conv_list = size_conv_list
+
+        size_convpool_list = list(reversed(size_convpool_list))
+        self.size_convpool_list = size_convpool_list
+
+        # define the fully connected layer
+        fcLayers = list(jparams['fcLayers'])
+        fcLayers.append(jparams['C_list'][0]*size_convpool_list[0]**2)
+        self.fcLayers = fcLayers
+        self.fc_number = len(self.fcLayers) - 1
+        self.W = nn.ModuleList(None)
+        with torch.no_grad():
+            for i in range(self.fc_number):
+                self.W.extend([nn.Linear(fcLayers[i + 1], fcLayers[i], bias=True)])
                 # torch.nn.init.zeros_(self.W[i].bias)
 
-        self.Conv = nn.ModuleList(None)
-        self.P = []
 
-        conv_number = int(len(args.convLayers) / 5)
-        self.conv_number = conv_number
-        self.fc_number = len(args.fcLayers) - 1
-
-        if conv_number > 0:
-            with torch.no_grad():
-                for i in range(conv_number):
-                    self.Conv.extend([nn.Conv2d(args.convLayers[(conv_number - i - 1) * 5],
-                                                args.convLayers[(conv_number - i - 1) * 5 + 1],
-                                                args.convLayers[(conv_number - i - 1) * 5 + 2],
-                                                stride=args.convLayers[(conv_number - i - 1) * 5 + 3],
-                                                padding=args.convLayers[(conv_number - i - 1) * 5 + 4], bias=True)])
-                    self.P.append(args.convLayers[(conv_number - i - 1) * 5 + 4])
-
-        self.unConv = nn.ModuleList(None)
-        if conv_number > 1:
-            with torch.no_grad():
-                for i in range(conv_number - 1):
-                    self.unConv.extend([nn.Conv2d(args.convLayers[(conv_number - i - 1) * 5 + 1],
-                                                  args.convLayers[(conv_number - i - 1) * 5],
-                                                  args.convLayers[(conv_number - i - 1) * 5 + 2],
-                                                  stride=args.convLayers[(conv_number - i - 1) * 5 + 3],
-                                                  padding=args.convLayers[(conv_number - i - 1) * 5 + 2] - 1 -
-                                                          args.convLayers[(conv_number - i - 1) * 5 + 4], bias=False)])
+        # if conv_number > 0:
+        #     with torch.no_grad():
+        #         for i in range(conv_number):
+        #             self.Conv.extend([nn.Conv2d(args.convLayers[(conv_number - i - 1) * 5],
+        #                                         args.convLayers[(conv_number - i - 1) * 5 + 1],
+        #                                         args.convLayers[(conv_number - i - 1) * 5 + 2],
+        #                                         stride=args.convLayers[(conv_number - i - 1) * 5 + 3],
+        #                                         padding=args.convLayers[(conv_number - i - 1) * 5 + 4], bias=True)])
+        #             self.P.append(args.convLayers[(conv_number - i - 1) * 5 + 4])
+        #
+        # self.unConv = nn.ModuleList(None)
+        # if conv_number > 1:
+        #     with torch.no_grad():
+        #         for i in range(conv_number - 1):
+        #             self.unConv.extend([nn.Conv2d(args.convLayers[(conv_number - i - 1) * 5 + 1],
+        #                                           args.convLayers[(conv_number - i - 1) * 5],
+        #                                           args.convLayers[(conv_number - i - 1) * 5 + 2],
+        #                                           stride=args.convLayers[(conv_number - i - 1) * 5 + 3],
+        #                                           padding=args.convLayers[(conv_number - i - 1) * 5 + 2] - 1 -
+        #                                                   args.convLayers[(conv_number - i - 1) * 5 + 4], bias=False)])
 
         # # We test 2 different Xavier Initiation
         # inf = []
@@ -568,8 +651,8 @@ class ConvEP(nn.Module):
         #     torch.nn.init.normal_(self.W[i].bias, 0, 0.05)
 
         # put model on GPU is available and asked
-        if args.device >= 0 and torch.cuda.is_available():
-            device = torch.device("cuda:" + str(args.device))
+        if jparams['device'] >= 0 and torch.cuda.is_available():
+            device = torch.device("cuda:" + str(jparams['device']))
             self.cuda = True
         else:
             device = torch.device("cpu")
@@ -578,47 +661,98 @@ class ConvEP(nn.Module):
         self.device = device
         self = self.to(device)
 
-    def stepper_p_conv(self, s, h, P_ind, target=None, beta=0):
+    def stepper_p_conv(self, s, data, P_ind, target=None, beta=0, return_derivatives=False):
         '''
         stepper function for prototypical convolutional model of EP
         '''
+        data = data.float()
+        dsdt = []
 
-        snew = []
-        snew.append(rho(self.W[0](s[1])))
+        # fully connected layer (classifier part)
+        dsdt.append(-s[0]+rho(self.W[0](s[1].view(s[1].size(0), -1))))  # flatten the s[1]? does it necessary?
 
         if beta != 0:
-            snew[0] = snew[0] + beta*(target-s[0])
+            dsdt[0] = dsdt[0] + beta*(target-s[0])
 
-        if len(s) > 2:
-            for fc in range(1, len(s)-2):
-                snew.append(rho(self.W[fc](s[fc+1]) + torch.mm(s[fc-1], self.W[fc-1].weight)))
+        for i in range(1, len(self.fcLayers)-1):
+            dsdt.append(-s[i] + rho(self.W[i](s[i+1]).view(s[i+1].size(0), -1), torch.mm(s[i-1], self.W[i-1].weight)))
+            # at the same time we flatten the layer before
 
-        snew.append(rho(self.W[-1](h[0].flatten(1,-1)) + torch.mm(s[-2], self.W[-2].weight)))
+        # Convolutional part
+        # last conv layer
+        s_pool, ind = self.pool(self.Conv[0](s[self.fc_number+1]))
+        P_ind[0] = ind # len(P_ind) = conv_number
+        dsdt.append(-s[self.fc_number] + rho(s_pool + torch.mm(s[self.fc_number-1], self.W[-1].weight).view(s[self.fc_number].size()))) # unflatten the result
+        del s_pool, ind
 
-        hnew = []
+        # middle conv layers
+        for i in range(1, self.conv_number-1):
+            s_pool, ind = self.pool(self.Conv[i](s[self.fc_number+1+i]))
+            P_ind[i] = ind
 
-        h0, ind = self.Pool(self.Conv[0](h[1]))
-        P_ind[0] = ind
-        hnew.append(rho(h0 + (torch.mm(s[-1], self.W[-1].weight)).unflatten(1, h[0].size()[1:])))
-        del ind, h0
+            if P_ind[i-1] is not None:
+                output_size = [s[self.fc_number+i-1].size(0), s[self.fc_number+i-1].size(0), self.size_conv_list[i-1],
+                               self.size_conv_list[i-1]]
+                s_unpool = F.conv_transpose2d(self.unpool(s[self.fc_number+i-1], P_ind[i-1], output_size=output_size),
+                                              weight=self.Conv[i-1].weight, padding=self.pad)
+                dsdt.append(-s[self.fc_number+i] + rho(s_pool + s_unpool))
+                del s_pool, s_unpool, ind, output_size
 
-        # save the input images at h[-1], so we do not update h[-1]
-        if len(h) > 2:
-            for cv in range(1, len(s)-2):
-                hcv, ind = self.Pool(self.Conv[cv](h[cv+1]))
-                P_ind[cv] = ind
-                # update the unConv weight data
-                self.unConv[cv-1].weight.data = (self.Conv[cv-1].weight.flip([2, 3])).transpose(0, 1)
+        # first conv layer
+        s_pool, ind = self.pool(self.Conv[-1](data))
+        P_ind[-1] = ind
+        if P_ind[-2] is not None:
+            output_size = [s[-2].size(0), s[-2].size(1), self.size_conv_list[-3], self.size_conv_list[-3]]
+            s_unpool = F.conv_transpose2d(self.unpool(s[-2], P_ind[-2], output_size=output_size),
+                                          weight=self.Conv[-2].weight, padding=self.pad)
+            dsdt.append(-s[-1] + rho(s_pool + s_unpool))
+            del s_pool, s_unpool, ind, output_size
 
-                hnew.append(hcv + self.unConv[cv-1](self.unPool(h[cv-1], P_ind[cv-1])))
-                del hcv, ind
+        for i in range(len(s)):
+            s[i] = s[i] + self.dt*dsdt[i]
 
-        # update
-        s, h = snew, hnew
+        if return_derivatives:
+            return s, P_ind, dsdt
+        else:
+            del dsdt
+            return s, P_ind
 
-        return s, h, P_ind
+        # snew = []
+        # snew.append(rho(self.W[0](s[1])))
+        #
+        # if beta != 0:
+        #     snew[0] = snew[0] + beta*(target-s[0])  # prototypical model (without the damping of s)
+        #
+        # if len(s) > 2:
+        #     for fc in range(1, len(s)-2):
+        #         snew.append(rho(self.W[fc](s[fc+1]) + torch.mm(s[fc-1], self.W[fc-1].weight)))
+        #
+        # snew.append(rho(self.W[-1](h[0].flatten(1,-1)) + torch.mm(s[-2], self.W[-2].weight)))
+        #
+        # hnew = []
+        #
+        # h0, ind = self.Pool(self.Conv[0](h[1]))
+        # P_ind[0] = ind
+        # hnew.append(rho(h0 + (torch.mm(s[-1], self.W[-1].weight)).unflatten(1, h[0].size()[1:])))
+        # del ind, h0
+        #
+        # # save the input images at h[-1], so we do not update h[-1]
+        # if len(h) > 2:
+        #     for cv in range(1, len(s)-2):
+        #         hcv, ind = self.Pool(self.Conv[cv](h[cv+1]))
+        #         P_ind[cv] = ind
+        #         # update the unConv weight data
+        #         self.unConv[cv-1].weight.data = (self.Conv[cv-1].weight.flip([2, 3])).transpose(0, 1)
+        #
+        #         hnew.append(hcv + self.unConv[cv-1](self.unPool(h[cv-1], P_ind[cv-1])))
+        #         del hcv, ind
+        #
+        # # update
+        # s, h = snew, hnew
 
-    def forward(self, s, h, P_ind, beta=0, target=None, tracking=False):
+        # return s, h, P_ind
+
+    def forward(self, s, data, P_ind, beta=0, target=None, tracking=False):
         # TODO why rename the self.variable at the beginning?
         T, Kmax = self.T, self.Kmax
         n_track = 9
@@ -630,100 +764,142 @@ class ConvEP(nn.Module):
             if beta == 0:
                 # first phase
                 for T in range(T):
-                    s, h, P_ind = self.stepper_p_conv(s, h, P_ind)
+                    s, P_ind = self.stepper_p_conv(s, data, P_ind)
                     if tracking:
                         for k in range(n_track):
                             m[k].append(s[0][k][2*k].item())
                             n[k].append(s[1][k][2*k].item())
-                            p[k].append(h[0][k][2][k][k])  # out_channel=2
-                            p[k].append(h[1][k][3][k][k])  # out_channel=3
+                            p[k].append(s[2][k][2][k][k])  # out_channel=2
+                            q[k].append(s[3][k][3][k][k])  # out_channel=3
             else:
                 # nudging phase
                 for K in range(Kmax):
-                    s, h, P_ind = self.stepper_p_conv(s, h, P_ind, target=target, beta=beta)
+                    s, P_ind = self.stepper_p_conv(s, data, P_ind, target=target, beta=beta)
                     if tracking:
                         for k in range(n_track):
                             m[k].append(s[0][k][2 * k].item())
                             n[k].append(s[1][k][2 * k].item())
-                            p[k].append(h[0][k][2][k][k])  # out_channel=2
-                            p[k].append(h[1][k][3][k][k])  # out_channel=3
+                            p[k].append(s[2][k][2][k][k])  # out_channel=2
+                            q[k].append(s[3][k][3][k][k])  # out_channel=3
 
         if tracking:
-            return s, h, P_ind, m, n, p, q
+            return s, P_ind, m, n, p, q
         else:
-            return s, h, P_ind
+            return s, P_ind
 
         # TODO consider C-EP (or the other methods) in the future?
 
-    def computeConvGradientEP(self, h, heq, P_ind, Peq_ind, s, seq):
+    def computeConvGradientEP(self, data, s, seq, P_ind, Peq_ind):
         batch_size = s[0].size(0)
         coef = 1 / (self.beta * batch_size)
+        if self.errorEstimate == 'symmetric':
+            coef = coef*0.5
 
         gradW_fc, gradBias_fc = [], []
         gradW_conv, gradBias_conv = [], []
 
         with torch.no_grad():
-
-            if len(s) > 2:
-                for fc in range(len(s)-2):
-                    gradW_fc.append(coef*(torch.mm(torch.transpose(s[fc], 0, 1), s[fc+1]) -
-                                         torch.mm(torch.transpose(seq[fc], 0, 1), seq[fc+1])))
-                    gradBias_fc.append(coef*(s[fc]-seq[fc]).sum(0))
+            # classifier
+            for i in range(self.fc_number-1):
+                gradW_fc.append(coef*(torch.mm(torch.transpose(s[i], 0, 1), s[i + 1]) - torch.mm(torch.transpose(seq[i],0, 1),
+                                                                                   seq[i + 1])))
+                gradBias_fc.append(coef*(s[i]-seq[i]).sum(0))
 
             # update the last layer of fc
-            gradW_fc.append(coef*(torch.mm(torch.transpose(s[-1], 0, 1), h[0].flatten(1, -1)) -
-                                 torch.mm(torch.transpose(seq[-1], 0, 1), heq[0].flatten(1,-1))))
+            gradW_fc.append(coef * (torch.mm(torch.transpose(s[self.fc_number-1], 0, 1), s[self.fc_number].view(s[self.fc_number].size(0), -1)) -
+                                        torch.mm(torch.transpose(seq[self.fc_number-1], 0, 1), seq[self.fc_number].view(s[self.fc_number].size(0), -1))))
 
-            gradBias_fc.append(coef*(s[-1]-seq[-1]).sum(0))
+            gradBias_fc.append(coef * (s[self.fc_number-1] - seq[self.fc_number-1]).sum(0))
 
-            for cv in range(len(h)-1):
-                gradW_conv.append(coef*(F.conv2d(h[cv+1].transpose(0, 1), self.unPool(h[cv], P_ind[cv]).transpose(0, 1), padding=self.P[cv]) -
-                                        F.conv2d(heq[cv+1].transpose(0, 1), self.unPool(heq[cv], Peq_ind[cv]).transpose(0, 1), padding=self.P[cv])).transpose(0, 1))
-                gradBias_conv.append(coef*(self.unPool(h[cv], P_ind[cv]) - self.unPool(heq[cv], Peq_ind[cv])).transpose(0, 1).sum(1, 2, 3))
+            # if len(s) > 2:
+            #     for fc in range(len(s)-2):
+            #         gradW_fc.append(coef*(torch.mm(torch.transpose(s[fc], 0, 1), s[fc+1]) -
+            #                              torch.mm(torch.transpose(seq[fc], 0, 1), seq[fc+1])))
+            #         gradBias_fc.append(coef*(s[fc]-seq[fc]).sum(0))
+
+            # convolutional layers
+            for i in range(self.conv_number-1):
+                output_size = [s[self.fc_number+i].size(0), s[self.fc_number+i].size(1), self.size_conv_list[i], self.size_conv_list[i]]
+
+                gradW_conv.append(coef*(F.conv2d(s[self.fc_number + i + 1].permute(1,0,2,3),
+                                                 self.unpool(s[self.fc_number + i], P_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)
+                                        - F.conv2d(seq[self.fc_number + i + 1].permute(1,0,2,3),
+                                                   self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1, 0, 2, 3))
+                gradBias_conv.append(coef*(self.unpool(s[self.fc_number+i], P_ind[i], output_size=output_size) -
+                                           self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[self.fc_number+i].size(1), -1).sum(1))
+
+                # gradconv_bias.append((1 / (beta * batch_size)) * (
+                #         self.unpool(s[self.nc + i], inds[self.nc + i], output_size=output_size) - self.unpool(
+                #     seq[self.nc + i], indseq[self.nc + i], output_size=output_size)).permute(1, 0, 2,
+                #                                                                              3).contiguous().view(
+                #     s[self.nc + i].size(1), -1).sum(1))
+            # last layer
+            output_size = [s[-1].size(0), s[-1].size(1), self.size_conv_list[-2], self.size_conv_list[-2]]
+            gradW_conv.append(coef*(F.conv2d(data.permute(1,0,2,3), self.unpool(s[-1], P_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)-
+                                    F.conv2d(data.permute(1,0,2,3), self.unpool(seq[-1], Peq_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1,0,2,3))
+            gradBias_conv.append(coef*(self.unpool(s[-1], P_ind[-1], output_size=output_size)-self.unpool(seq[-1], Peq_ind[-1], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[-1].size(1),-1).sum(1))
 
         return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
 
-    def updateConvWeight(self, s, seq, h, heq, P_ind, Peq_ind):
+    def updateConvWeight(self, data, s, seq, P_ind, Peq_ind):
 
-        gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(self, h, heq, P_ind, Peq_ind, s, seq)
+        gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
+
+        lr = self.lr
+
+        # for i in range(len(self.fc)):
+        #     self.fc[i].weight += lr_tab[i] * gradfc[i]
+        #     self.fc[i].bias += lr_tab[i] * gradfc_bias[i]
+        # for i in range(len(self.conv)):
+        #     self.conv[i].weight += lr_tab[i + len(self.fc)] * gradconv[i]
+        #     self.conv[i].bias += lr_tab[i + len(self.fc)] * gradconv_bias[i]
 
         # TODO consider change the lr sign for the random beta sign
         with torch.no_grad():
-            for (fc, param) in enumerate(self.W):
-                param.weight.data += self.lr[fc] * gradW_fc[fc]
-                param.bias.data += self.lr[fc] * gradBias_fc[fc]
+            for (i, param) in enumerate(self.W):
+                param.weight.data += lr[i] * gradW_fc[i]
+                param.bias.data += lr[i] * gradBias_fc[i]
 
-            for (cv, param) in enumerate(self.Conv):
-                param.weight.data += self.lr[cv+self.fc_number] * gradW_conv[cv]
-                param.weight.data += self.lr[cv+self.fc_number] * gradBias_conv[cv]
+            for (i, param) in enumerate(self.Conv):
+                param.weight.data += lr[i+self.fc_number] * gradW_conv[i]
+                param.bias.data += lr[i+self.fc_number] * gradBias_conv[i]
 
-    def initState(self, args, data):
-        '''
-        Inite the state of CNN
-        '''
-        h, s = [], []
+    # def initState(self, args, data):
+    #     '''
+    #     Inite the state of CNN
+    #     '''
+    #     h, s = [], []
+    #     P_ind = []
+    #     batch_size = data.size(0)
+    #     for fc in range(len(args.fcLayers)-1):
+    #         s.append(torch.zeros(batch_size, args.fcLayers[fc], requires_grad=False))
+    #
+    #     # TODO verify the input data size
+    #     h.append(data.float())
+    #     for cv in range(1, len(self.conv_number)):
+    #         # data size of convolutional layer : (batch, channel, size, size)
+    #         # output size is calculated by (M-F+2P)/S + 1
+    #         output_size = (h[cv-1].size(-1)-args.convLayers[(cv-1)*5+2] + 2*args.convLayers[(cv-1)*5+4])/args.convLayers[(cv-1)*5+3] +1
+    #         h.append(torch.zeros(batch_size, args.convLayers[(cv-1)*5+1], output_size, output_size))
+    #         P_ind.append(None)
+    #
+    #     #  we reverse the h at the end
+    #     h.reverse()
+    #
+    #     return s, h, P_ind
+
+    def initHidden(self, batch_size):
+        s = []
         P_ind = []
-        batch_size = data.size(0)
-        for fc in range(len(args.fcLayers)-1):
-            s.append(torch.zeros(batch_size, args.fcLayers[fc], requires_grad=False))
-
-        # TODO verify the input data size
-        h.append(data.float())
-        for cv in range(1, len(self.conv_number)):
-            # data size of convolutional layer : (batch, channel, size, size)
-            # output size is calculated by (M-F+2P)/S + 1
-            output_size = (h[cv-1].size(-1)-args.convLayers[(cv-1)*5+2] + 2*args.convLayers[(cv-1)*5+4])/args.convLayers[(cv-1)*5+3] +1
-            h.append(torch.zeros(batch_size, args.convLayers[(cv-1)*5+1], output_size, output_size))
+        for i in range(self.fc_number):
+            s.append(torch.zeros(batch_size, self.fcLayers[i], requires_grad=False)) # why we requires grad ? for comparison with BPTT?
+            # inds.append(None)
+        for i in range(self.conv_number):
+            s.append(torch.zeros(batch_size, self.C_list[i], self.size_convpool_list[i], self.size_convpool_list[i],
+                                 requires_grad=False))
             P_ind.append(None)
 
-        #  we reverse the h at the end
-        h.reverse()
-
-        return s, h, P_ind
-
-
-
-
+        return s, P_ind
 
 
 

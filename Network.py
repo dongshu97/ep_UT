@@ -35,6 +35,7 @@ class MlpEP(jit.ScriptModule):
         self.fcLayers = jparams['fcLayers']
         self.errorEstimate = jparams['errorEstimate']
         self.randomHidden = jparams['randomHidden']
+        self.gamma  = jparams['gamma']
 
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():

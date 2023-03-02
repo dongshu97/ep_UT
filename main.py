@@ -22,6 +22,15 @@ from Network import *
 from plotFunction import*
 from visu import *
 
+# TODO use argsparser to give the file path of json file
+parser = argparse.ArgumentParser(description='Path of json file')
+parser.add_argument(
+    '--json_path',
+    type = str,
+    default=r'D:\Results_data\EP_batchHomeo\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35',
+    help='path of json configuration'
+)
+args = parser.parse_args()
 # parser = argparse.ArgumentParser(description='usupervised EP')
 # parser.add_argument(
 #     '--device',
@@ -291,7 +300,12 @@ from visu import *
 # args = parser.parse_args()
 
 # use json to load the configuration parameters
-with open('.\config.json') as f:
+if os.name != 'posix':
+    prefix = '\\'
+else:
+    prefix = '/'
+
+with open(args.json_path + prefix + 'config.json') as f:
   jparams = json.load(f)
 
 #print(jparams)
@@ -473,11 +487,6 @@ if __name__ == '__main__':
 
     # Cuda problem
     os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-    if os.name != 'posix':
-        prefix = '\\'
-    else:
-        prefix = '/'
 
     # save hyper-parameters as json file
     with open(BASE_PATH + prefix + "config.json", "w") as outfile:

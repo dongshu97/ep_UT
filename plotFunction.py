@@ -19,7 +19,7 @@ def plot_error(dataframe, idx):
     plt.plot(train_error_tab, label = 'train error #' + str(idx))
     plt.plot(test_error_tab, label = 'test error #' + str(idx))
 
-    plt.ylabel('Error (%)')
+    plt.ylabel('Error ')
     plt.xlabel('Epochs')
 
     plt.title('Train and Test error')
@@ -43,7 +43,7 @@ def plot_mean(store_train_error, store_test_error):
         plt.plot(epochs, mean_test, label = 'mean_test_error')
         plt.fill_between(epochs, mean_test - std_test, mean_test + std_test, facecolor = '#fadcb3')
 
-        plt.ylabel('Error (%)')
+        plt.ylabel('Error ')
         plt.xlabel('Epochs')
         plt.title('Mean train and Test error with std')
         plt.legend()
