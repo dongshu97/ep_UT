@@ -26,8 +26,8 @@ from visu import *
 parser = argparse.ArgumentParser(description='Path of json file')
 parser.add_argument(
     '--json_path',
-    type = str,
-    default=r'D:\Results_data\EP_batchHomeo\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35',
+    type=str,
+    default=r'.',
     help='path of json configuration'
 )
 args = parser.parse_args()
@@ -361,8 +361,8 @@ if jparams['dataset'] == 'mnist':
         # if args.unlabeledPercent != 0 and args.unlabeledPercent != 1:
         #     train_set = UnlabelDataset(train_set, './MNIST_alterLearning', args.unlabeledPercent, Seed=0)
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)
-
-    elif jparams['action'] == 'supervised_ep' or jparams['action'] == 'train_conv_ep':
+    else:
+    #elif jparams['action'] == 'supervised_ep' or jparams['action'] == 'train_conv_ep':
         train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                transform=torchvision.transforms.Compose(transforms),
                                                target_transform=ReshapeTransformTarget(10))
@@ -379,11 +379,11 @@ if jparams['dataset'] == 'mnist':
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
     # define the class dataset
-    seed = 42  # seed number should between 0 to 42
+    seed = 34  # seed number should between 0 to 42
 
     # TODO this part can use the same method as data-split of semi-supervised learning
-    x = train_set.data.clone().detach()
-    y = train_set.targets.clone().detach()
+    x = train_set.data
+    y = train_set.targets
 
     class_set = splitClass(x, y, 0.02, seed=seed, transform=torchvision.transforms.Compose(transforms))
     #
@@ -398,11 +398,11 @@ if jparams['dataset'] == 'mnist':
     #                              target_transform=ReshapeTransformTarget(10))
 
     if jparams['device'] >= 0:
-        class_loader = torch.utils.data.DataLoader(class_set, batch_size=1000, shuffle=True)
+        class_loader = torch.utils.data.DataLoader(class_set, batch_size=1200, shuffle=True)
     else:
         class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
-    layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=1000, shuffle=True)
+    layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=1200, shuffle=True)
 
 elif jparams['dataset'] == 'YinYang':
     print('We use the YinYang dataset')
@@ -474,6 +474,7 @@ if __name__ == '__main__':
     jparams['display'].reverse()
     jparams['imShape'].reverse()
     jparams['dropProb'].reverse()
+    jparams['pruneAmount'].reverse()
 
     BASE_PATH, name = createPath()
 
@@ -482,8 +483,6 @@ if __name__ == '__main__':
         net = ConvEP(jparams)
     else:
         net = torch.jit.script(MlpEP(jparams))
-
-    class_net = Classlayer(jparams)
 
     # we load the pre-trained network
     if jparams['analysis_preTrain']:
@@ -596,6 +595,9 @@ if __name__ == '__main__':
 
         #net.save(BASE_PATH + prefix+'model_entire.pt')
 
+        # create a forward NN with same weights of EP network
+        # forward_net = forwardNN(jparams['fcLayers'], net.W, jparams['Prune'], jparams['PruneAmount'])
+
         test_error_list_av = []
         test_error_list_max = []
 
@@ -633,6 +635,9 @@ if __name__ == '__main__':
             Xth_record.append(torch.norm(Xth).item())
             Xth_dataframe = updateXthframe(BASE_PATH, Xth_dataframe, Xth_record)
 
+        # we create the layer for classfication
+        class_net = Classlayer(jparams)
+
         # we create dataframe for classification layer
         class_dataframe = initDataframe(BASE_PATH, method='classification_layer', dataframe_to_init='classification_layer.csv')
         torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
@@ -659,22 +664,21 @@ if __name__ == '__main__':
     elif jparams['action'] == 'visu':
 
         # # the hyper-parameters "analysis_preTrain" should be set at 1 at the beginning
-
         del(jparams)
         # load the json file
-        with open(r'C:\Users\CNRS-THALES\OneDrive\文档\Homeostasis_python\Eqprop-unsuperivsed-MLP\DATA-0\2023-02-27\S-12\config.json') as f:
+        with open(r'D:\Results_data\EP_batch_optimized_results\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35\S-6\config.json') as f:
             jparams = json.load(f)
-
-        # reverse several variables in jparams
-        jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
-        jparams['C_list'].reverse()  # we reverse also the list of channels
-        jparams['lr'].reverse()
-        jparams['display'].reverse()
-        jparams['imShape'].reverse()
-        jparams['dropProb'].reverse()
+        jparams['action'] = 'visu'
+        # # reverse several variables in jparams
+        # jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
+        # jparams['C_list'].reverse()  # we reverse also the list of channels
+        # jparams['lr'].reverse()
+        # jparams['display'].reverse()
+        # jparams['imShape'].reverse()
+        # jparams['dropProb'].reverse()
 
         # load the pre-trained network
-        with open(r'C:\Users\CNRS-THALES\OneDrive\文档\Homeostasis_python\Eqprop-unsuperivsed-MLP\DATA-0\2023-02-27\S-12\model_entire.pt', 'rb') as f:
+        with open(r'D:\Results_data\EP_batch_optimized_results\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35\S-6\model_entire.pt', 'rb') as f:
             loaded_net = torch.jit.load(f)
 
         net = torch.jit.script(MlpEP(jparams))
@@ -687,7 +691,10 @@ if __name__ == '__main__':
         response, max0_indice = classify(net, jparams, class_loader)
         error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
 
-        # train classification response
+        # we create the classification layer
+        class_net = Classlayer(jparams)
+
+        # dataframe save classification layer training result
         class_dataframe = initDataframe(BASE_PATH, method='classification_layer',
                                         dataframe_to_init='classification_layer.csv')
         torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
@@ -705,7 +712,7 @@ if __name__ == '__main__':
             final_test_error_epoch, final_loss_epoch = test_unsupervised_ep_layer(net, class_net, jparams, test_loader)
             final_test_error_list.append(final_test_error_epoch.item())
             final_loss_error_list.append(final_loss_epoch.item())
-            class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_loss_error_list,
+            class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
                                               filename='classification_layer.csv', loss=final_loss_error_list)
 
             # save the trained class_net

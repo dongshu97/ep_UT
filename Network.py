@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.jit as jit
+import torch.nn.utils.prune as prune
 
 from main import rho, rhop
 from typing import List, Optional, Tuple
@@ -15,6 +16,32 @@ Try to use the same function name for the MLP class and Conv class
 but the problem is that, there are different variables for Conv class than the MLP class,
 so whether we will merge s and h together?
 '''
+
+
+# class forwardNN(nn.Module):
+#   def __init__(self, fcLayers, ep_W):
+#     super(forwardNN, self).__init__()
+#     self.fcLayers = fcLayers
+#     self.W = nn.ModuleList(None)
+#     for i in range(len(jparams['fcLayers']) - 1):
+#       self.W.extend([nn.Linear(jparams['fcLayers'][i+1], jparams['fcLayers'][i], bias=False)])
+#       self.W[i].weights.data = ep_W[i]
+
+class forwardNN(nn.Module):
+    def __init__(self, fcLayers, ep_W):
+        super(forwardNN, self).__init__()
+        # TODO this network only works for FCL
+        self.fcLayers = fcLayers
+        self.W = nn.ModuleList(None)
+        for i in range(len(fcLayers) - 1):
+            self.W.extend([nn.Linear(fcLayers[i + 1], fcLayers[i], bias=False)])
+            self.W[i].weight.data = ep_W[i]
+        # if Prune == 'Initiation':
+        #     for i in range(len(pruneAmount)):
+        #         # TODO reverse the pruneAmount when we get the hyperparameters
+        #         prune.random_unstructured(self.W[i], name='weight', amount=pruneAmount[i])
+
+
 
 
 class MlpEP(jit.ScriptModule):
@@ -35,7 +62,8 @@ class MlpEP(jit.ScriptModule):
         self.fcLayers = jparams['fcLayers']
         self.errorEstimate = jparams['errorEstimate']
         self.randomHidden = jparams['randomHidden']
-        self.gamma  = jparams['gamma']
+        self.gamma = jparams['gamma']
+        self.Prune = False
 
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
@@ -64,7 +92,7 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             for i in range(len(jparams['fcLayers'])-1):
                 w = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device)
-                bound = 1/ np.sqrt(jparams['fcLayers'][i+1])
+                bound = 1 / np.sqrt(jparams['fcLayers'][i+1])
                 #nn.init.xavier_uniform_(w)
                 nn.init.uniform_(w, a=-bound, b=bound)
                 W.append(w)
@@ -80,6 +108,21 @@ class MlpEP(jit.ScriptModule):
                 nn.init.zeros_(b)
                 bias.append(b)
         self.bias = bias
+
+        # create the mask for Pruning
+        if jparams['Prune'] == 'Initiation':
+            self.Prune = True
+            if len(jparams['pruneAmount']) != len(jparams['fcLayers'])-1:
+                raise ValueError("pruneAmount should be the same size of  network layers")
+            forward_W, W_mask = [], []
+            for i in range(len(jparams['fcLayers']) - 1):
+                forward_W.extend([nn.Linear(jparams['fcLayers'][i + 1], jparams['fcLayers'][i], bias=False)])
+                forward_W[i].weight.data = self.W[i]
+                prune.random_unstructured(forward_W[i], name='weight', amount=jparams['pruneAmount'][i])
+                W_mask.append(forward_W[i].weight_mask)
+                self.W[i] = self.W[i].mul(W_mask[i])
+
+            self.W_mask = W_mask
 
         self = self.to(device)
 
@@ -287,6 +330,9 @@ class MlpEP(jit.ScriptModule):
                 lrDecay = self.lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
                 self.W[layer] += lrDecay * gradW[layer]
                 self.bias[layer] += lrDecay * gradBias[layer]
+            if self.Prune is True:
+                for layer in range(len(self.W)):
+                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
 
     @jit.script_method
     def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
@@ -326,6 +372,10 @@ class MlpEP(jit.ScriptModule):
                 # print('alpha is:', alpha[layer])
                 self.W[layer] += lrDecay * (m_dw_corr / (torch.sqrt(v_dw_corr) + self.epsillon))
                 self.bias[layer] += lrDecay * (m_db_corr / (torch.sqrt(v_db_corr) + self.epsillon))
+            if self.Prune is True:
+                for layer in range(len(self.W)):
+                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+
         self.m_dw = m_dw_new
         self.m_db = m_db_new
         self.v_dw = v_dw_new
@@ -357,7 +407,9 @@ class MlpEP(jit.ScriptModule):
                     self.W[layer] += lrDecay*gradW[layer]
                     self.bias[layer] += lrDecay*gradBias[layer]
 
-
+            if self.Prune is True:
+                for layer in range(len(self.W)):
+                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
 
     @jit.script_method
     def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], epoch=1):
@@ -402,6 +454,11 @@ class MlpEP(jit.ScriptModule):
                 # print('alpha is:', alpha[layer])
                 self.W[layer] += lrDecay*(m_dw_corr/(torch.sqrt(v_dw_corr) + self.epsillon))
                 self.bias[layer] += lrDecay*(m_db_corr/(torch.sqrt(v_db_corr) + self.epsillon))
+
+            if self.Prune is True:
+                for layer in range(len(self.W)):
+                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+
         self.m_dw = m_dw_new
         self.m_db = m_db_new
         self.v_dw = v_dw_new

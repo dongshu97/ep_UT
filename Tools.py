@@ -134,8 +134,10 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
     correct_test = torch.zeros(1, device=net.device).squeeze()
     total_test = torch.zeros(1, device=net.device).squeeze()
     loss_test = torch.zeros(1, device=net.device).squeeze()
+    total_batch = torch.zeros(1, device=net.device).squeeze()
 
     for batch_idx, (data, targets) in enumerate(test_loader):
+        total_batch += 1
         s = net.initState(data)
         if net.cuda:
             targets = targets.to(net.device)
@@ -162,6 +164,7 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
 
     # calculate the test error
     test_error = 1 - correct_test / total_test
+    loss_test = loss_test / total_batch
 
     return test_error, loss_test
 
