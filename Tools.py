@@ -18,7 +18,6 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from Network import*
 
-
 def classify(net, jparams, class_loader):
 
     net.eval()
@@ -68,6 +67,67 @@ def classify(net, jparams, class_loader):
     unclassified += max0_indice.size(0)
 
     return response, max0_indice
+
+# def classify(net, jparams, class_loader):
+#
+#
+#     net.eval()
+#     class_moyenne = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
+#     batch_num=0
+#
+#     for batch_idx, (data, targets) in enumerate(class_loader):
+#
+#         # initiation of s
+#         s = net.initState(data)
+#
+#         if net.cuda:
+#             targets = targets.to(net.device)#no need to put data on the GPU as data is included in s!
+#             for i in range(len(s)):
+#                 s[i] = s[i].to(net.device)
+#
+#         # free phase
+#         s = net.forward(s)
+#         result_output = s[0].detach()
+#         class_vector = targets
+#
+#         # calculate each class_moyenne
+#         class_moyenne_batch = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
+#         for i in range(jparams['n_class']):
+#             indice = (class_vector == i).nonzero(as_tuple=True)[0]
+#             result_single = result_output[indice, :]
+#             class_moyenne_batch[i, :] = torch.mean(result_single, axis=0)
+#         class_moyenne += class_moyenne_batch
+#         batch_num += 1
+#         # # record all the output values
+#         # if batch_idx == 0:
+#         #     result_output = s[0].detach()
+#         # else:
+#         #     result_output = torch.cat((result_output, s[0].detach()), 0)
+#         #
+#         # # record all the class sent
+#         # if batch_idx == 0:
+#         #     class_vector = targets
+#         # else:
+#         #     class_vector = torch.cat((class_vector, targets), 0)
+#
+#     ##################### classifier one2one ########################
+#
+#     class_moyenne = class_moyenne/batch_num
+#
+#     for i in range(jparams['n_class']):
+#         indice = (class_vector == i).nonzero(as_tuple=True)[0]
+#         result_single = result_output[indice, :]
+#         class_moyenne[i, :] = torch.mean(result_single, axis=0)
+#
+#     # for the unclassified neurons, we kick them out from the responses
+#     unclassified = 0
+#     response = torch.argmax(class_moyenne, 0)
+#     # TODO to verify the difference between torch.max(output) and torch.max(class_moyenne)
+#     max0_indice = (torch.max(class_moyenne, 0).values == 0).nonzero(as_tuple=True)[0]
+#     response[max0_indice] = -1
+#     unclassified += max0_indice.size(0)
+#
+#     return response, max0_indice
 
 
 def classify_network(net, class_net, jparams, layer_loader):

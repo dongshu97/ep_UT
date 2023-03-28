@@ -64,7 +64,7 @@ class MlpEP(jit.ScriptModule):
         self.randomHidden = jparams['randomHidden']
         self.gamma = jparams['gamma']
         self.Prune = False
-
+        self.W_mask = [1,1]
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -93,8 +93,8 @@ class MlpEP(jit.ScriptModule):
             for i in range(len(jparams['fcLayers'])-1):
                 w = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device)
                 bound = 1 / np.sqrt(jparams['fcLayers'][i+1])
-                #nn.init.xavier_uniform_(w)
-                nn.init.uniform_(w, a=-bound, b=bound)
+                nn.init.xavier_uniform_(w, gain=0.5)
+                #nn.init.uniform_(w, a=-bound, b=bound)
                 W.append(w)
         self.W = W
 
@@ -103,7 +103,7 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             for i in range(len(jparams['fcLayers'])-1):
                 b = torch.empty(jparams['fcLayers'][i], device=device)
-                bound = 1/np.sqrt(jparams['fcLayers'][1])
+                # bound = 1 / np.sqrt(jparams['fcLayers'][i])
                 #nn.init.uniform_(b, a=-bound, b=bound)
                 nn.init.zeros_(b)
                 bias.append(b)

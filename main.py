@@ -385,12 +385,17 @@ if jparams['dataset'] == 'mnist':
     x = train_set.data
     y = train_set.targets
 
-    class_set = splitClass(x, y, 0.02, seed=seed, transform=torchvision.transforms.Compose(transforms))
+    label_percentage = jparams['label_percentage']
+    if jparams['label_percentage']==1:
+        class_set = train_set
+        layer_set = train_set
+    else:
+        class_set = splitClass(x, y, label_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
     #
     # class_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
     #                          transform=torchvision.transforms.Compose(transforms))
 
-    layer_set = splitClass(x, y, 0.02, seed=seed, transform=torchvision.transforms.Compose(transforms),
+        layer_set = splitClass(x, y, label_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms),
                                  target_transform=ReshapeTransformTarget(10))
 
     # layer_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
@@ -666,19 +671,20 @@ if __name__ == '__main__':
         # # the hyper-parameters "analysis_preTrain" should be set at 1 at the beginning
         del(jparams)
         # load the json file
-        with open(r'D:\Results_data\EP_batch_optimized_results\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35\S-6\config.json') as f:
+        with open(r'D:\Results_data\EP_batch_optimized_results\784-2000-N7-beta0.31-hardsigm-lr0.0159-batch139-gamma0.2-epoch100\config.json') as f:
             jparams = json.load(f)
         jparams['action'] = 'visu'
         # # reverse several variables in jparams
-        # jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
-        # jparams['C_list'].reverse()  # we reverse also the list of channels
-        # jparams['lr'].reverse()
-        # jparams['display'].reverse()
-        # jparams['imShape'].reverse()
-        # jparams['dropProb'].reverse()
+        jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
+        jparams['C_list'].reverse()  # we reverse also the list of channels
+        jparams['lr'].reverse()
+        jparams['display'].reverse()
+        jparams['imShape'].reverse()
+        jparams['dropProb'].reverse()
+        jparams['pruneAmount'].reverse()
 
         # load the pre-trained network
-        with open(r'D:\Results_data\EP_batch_optimized_results\784-1024-N5-beta0.14-hardsigm-T40-Kmax15-lr0.0138-batch140-gamma0.4-epoch35\S-6\model_entire.pt', 'rb') as f:
+        with open(r'D:\Results_data\EP_batch_optimized_results\784-2000-N7-beta0.31-hardsigm-lr0.0159-batch139-gamma0.2-epoch100\S-10\model_entire.pt', 'rb') as f:
             loaded_net = torch.jit.load(f)
 
         net = torch.jit.script(MlpEP(jparams))
@@ -686,17 +692,41 @@ if __name__ == '__main__':
         net.bias = loaded_net.bias.copy()
 
         net.eval()
+        # reset the dataset
+        label_percentage = jparams['label_percentage']
+        if jparams['label_percentage'] == 1:
+            class_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+                                               transform=torchvision.transforms.Compose(transforms))
+            layer_set = train_set
+        else:
+            class_set = splitClass(x, y, label_percentage, seed=seed,
+                                   transform=torchvision.transforms.Compose(transforms))
+            layer_set = splitClass(x, y, label_percentage, seed=seed,
+                                   transform=torchvision.transforms.Compose(transforms),
+                                   target_transform=ReshapeTransformTarget(10))
+        if jparams['device'] >= 0:
+            class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
+        else:
+            class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
+
+        layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
         # one2one response
         response, max0_indice = classify(net, jparams, class_loader)
         error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
+
+        # result of one2one
+        error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
+        one2one_result = [error_av_epoch.cpu().numpy(), error_max_epoch.cpu().numpy()]
+        print(one2one_result)
+        np.savetxt(BASE_PATH + prefix + 'one2one.txt', one2one_result, delimiter=',')
 
         # we create the classification layer
         class_net = Classlayer(jparams)
 
         # dataframe save classification layer training result
         class_dataframe = initDataframe(BASE_PATH, method='classification_layer',
-                                        dataframe_to_init='classification_layer.csv')
+                                        dataframe_to_init='classification_layer'+str(label_percentage)+'.csv')
         torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
 
         class_train_error_list = []
@@ -713,7 +743,7 @@ if __name__ == '__main__':
             final_test_error_list.append(final_test_error_epoch.item())
             final_loss_error_list.append(final_loss_epoch.item())
             class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
-                                              filename='classification_layer.csv', loss=final_loss_error_list)
+                                              filename='classification_layer'+str(label_percentage)+'.csv', loss=final_loss_error_list)
 
             # save the trained class_net
             torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
