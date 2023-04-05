@@ -230,7 +230,6 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
 
 
 def train_supervised_crossEntropy(net, jparams, train_loader, epoch):
-    # TODO add the dropout (There is no dropout in the train_crossEntropy yet)
     net.train()
     net.epoch = epoch + 1
     total_train = torch.zeros(1, device=net.device).squeeze()
@@ -241,24 +240,32 @@ def train_supervised_crossEntropy(net, jparams, train_loader, epoch):
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
-        h = net.initHidden(jparams['fcLayers'], data)
+        h, y = net.initHidden(jparams['fcLayers'], data)
+
+        if jparams['Dropout']:
+            p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'],y=y)
+        else:
+            p_distribut, y_distribut = None, None
 
         if net.cuda:
             targets = targets.to(net.device)
             net.beta = net.beta.to(net.device)
             h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+            if jparams['Dropout']:
+                p_distribut = [item.to(net.device) for item in p_distribut]
+                y_distribut = y_distribut.to(net.device)
 
         if jparams['errorEstimate'] == 'one-sided':
             # free phase
-            h, y = net.forward_softmax(h)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
             heq = h.copy()
             yeq = y.clone()
             # nudging phase
             if len(h) > 1:
-                h, y = net.forward_softmax(h, target=targets, beta=net.beta)
+                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
             # update the weights
             if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight_softmax(h, heq, y, targets,epoch=net.epoch)
+                net.Adam_updateWeight_softmax(h, heq, y, targets, epoch=net.epoch)
             else:
                 net.updateWeight_softmax(h, heq, y, targets)
 
@@ -266,16 +273,16 @@ def train_supervised_crossEntropy(net, jparams, train_loader, epoch):
             if len(h) <= 1:
                 raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
             # free phase
-            h, y = net.forward_softmax(h)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
             heq = h.copy()
             yeq = y.clone()
             # + beta
-            h, y = net.forward_softmax(h, target=targets, beta=net.beta)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
             hplus = h.copy()
             yplus = y.clone()
             # -beta
             h = heq.copy()
-            h, y = net.forward_softmax(h, target=targets, beta=-net.beta)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=-net.beta)
             hmoins = h.copy()
             ymoins = y.clone()
         # update and track the weights of the network
@@ -410,7 +417,8 @@ def train_supervised_ep(net, jparams, train_loader, epoch):
     return train_error
 
 
-# TODO maybe to remove the function of unsupervised_crossEntropy
+# TODO the function of unsupervised_crossEntropy can be used in semi-supervised learning
+# TODO add the dropout
 def train_unsupervised_crossEntropy(net, jparams, train_loader, epoch):
     net.train()
     net.epoch = epoch + 1
@@ -433,16 +441,24 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, epoch):
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
-        h = net.initHidden(jparams['fcLayers'], data)
+        h, y = net.initHidden(jparams['fcLayers'], data)
+
+        if jparams['Dropout']:
+            p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'])
+        else:
+            p_distribut, y_distribut = None, None
 
         if net.cuda:
             targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
             net.beta = net.beta.to(net.device)
             h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+            if jparams['Dropout']:
+                p_distribut = [item.to(net.device) for item in p_distribut]
+                y_distribut = y_distribut.to(net.device)
 
         if jparams['errorEstimate'] == 'one-sided':
             # free phase
-            h, y = net.forward_softmax(h)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
             heq = h.copy()
             yeq = y.clone()
             # # define the targets by creating a new softmax function
@@ -451,7 +467,7 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, epoch):
             unsupervised_targets, maxindex = net.unsupervised_target(yeq, jparams['nudge_N'], Xth)
             # nudging phase
             if len(h) > 1:
-                h, y = net.forward_softmax(h, target=unsupervised_targets, beta=net.beta)
+                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
 
             # update the weights
             if jparams['Optimizer'] == 'Adam':
@@ -463,7 +479,7 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, epoch):
             if len(h) <= 1:
                 raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
             # free phase
-            h, y = net.forward_softmax(h)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
             heq = h.copy()
             yeq = y.clone()
             # # define the unsupervised targets
@@ -471,12 +487,12 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, epoch):
             # define the unsupervised targets by argmax
             unsupervised_targets, maxindex = net.unsupervised_target(yeq, jparams['nudge_N'], Xth)
             # + beta
-            h, y = net.forward_softmax(h, target=unsupervised_targets, beta=net.beta)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
             hplus = h.copy()
             yplus = y.clone()
             # -beta
             h = heq.copy()
-            h, y = net.forward_softmax(h, target=unsupervised_targets, beta=-net.beta)
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=-net.beta)
             hmoins = h.copy()
             ymoins = y.clone()
         # update and track the weights of the network
