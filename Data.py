@@ -4,6 +4,7 @@ import os
 from torch.utils.data import Dataset
 from PIL import Image
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MultiLabelBinarizer
 
 
 class ReshapeTransform:
@@ -182,6 +183,37 @@ class ClassDataset(Dataset):
 
     def __len__(self):
         return len(self.targets)
+
+
+def generate_N_targets_label(targets, number_per_class, output_neurons):
+    multi_targets = list(map(lambda x: np.asarray(range(number_per_class*x, number_per_class*(x+1))), targets))
+    mlb = MultiLabelBinarizer(classes=range(output_neurons))
+    N_targets = mlb.fit_transform(multi_targets)
+
+    return torch.from_numpy(N_targets)
+
+
+def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_number, seed=1):
+
+    fraction = labeled_number/len(targets)
+    # we split the dataset for supervised training and unsupervised training
+    X_super, X_unsuper, Y_super, Y_unsuper = train_test_split(train_set, targets, test_size=1 - fraction,
+                                                              train_size=fraction, random_state=seed,
+                                                              stratify=targets)
+    number_per_class = int(output_neurons/n_class)
+
+    # we define the target of supervised learning considering the number of output neurons
+    if number_per_class > 1:
+        N_Y_super = generate_N_targets_label(Y_super, number_per_class, output_neurons)
+    else:
+        N_Y_super = torch.nn.functional.one_hot(Y_super, num_classes=-1)
+
+    # we load the target
+    dataset_super = torch.utils.data.TensorDataset(X_super, N_Y_super)
+
+    dataset_unsuper = torch.utils.data.TensorDataset(X_unsuper, Y_unsuper)   # the one-hot encoding is not applied
+
+    return dataset_super, dataset_unsuper
 
 
 # class ValidationDataset(Dataset):

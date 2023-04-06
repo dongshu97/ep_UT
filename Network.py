@@ -53,7 +53,6 @@ class MlpEP(jit.ScriptModule):
         self.dt = jparams['dt']
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
-        self.lr = jparams['lr']
         self.coeffDecay = jparams['coeffDecay']
         self.epochDecay = jparams['epochDecay']
         self.batchSize = jparams['batchSize']
@@ -125,7 +124,7 @@ class MlpEP(jit.ScriptModule):
         self = self.to(device)
 
     #@jit.script_method
-    def mydropout(self, s:List[torch.Tensor], p:List[float], y:Optional[torch.Tensor])->List[torch.FloatTensor]:
+    def mydropout(self, s:List[torch.Tensor], p:List[float], y:Optional[torch.Tensor]=None)->List[torch.FloatTensor]:
 
         # if p < 0 or p > 1:
         #     raise ValueError("dropout probability has to be between 0 and 1, " "but got {}".format(p))
@@ -134,7 +133,7 @@ class MlpEP(jit.ScriptModule):
         if y is None:
             for layer in range(len(s)-1):
                 if p[layer] == 0:
-                    p_distribut.append(torch.ones(s[layer].size))
+                    p_distribut.append(torch.ones(s[layer].size()))
                 else:
                     binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1-p[layer]))
                     p_distribut.append(binomial.sample(s[layer].size()))
@@ -144,7 +143,7 @@ class MlpEP(jit.ScriptModule):
                 y_distribut = torch.ones(y.size())
             else:
                 binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[0]))
-                p_distribut.append(binomial.sample(y.size()))
+                y_distribut = binomial.sample(y.size())
             for layer in range(len(s)-1):
                 binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[layer+1]))
                 p_distribut.append(binomial.sample(s[layer].size()))
@@ -307,7 +306,7 @@ class MlpEP(jit.ScriptModule):
 
     @jit.script_method
     def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                             ybeta:Optional[torch.Tensor]=None):
+                                  ybeta:Optional[torch.Tensor]=None):
         # define the coefficient for the hidden neurons
         batch_size = h[0].size(0)
         coef = 1 / (self.beta * batch_size)
@@ -331,7 +330,7 @@ class MlpEP(jit.ScriptModule):
 
     @jit.script_method
     def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                             ybeta:Optional[torch.Tensor]=None, epoch=1):
+                             lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch=1):
 
         '''update the weights and biases of network with a softmax output'''
 
@@ -339,7 +338,7 @@ class MlpEP(jit.ScriptModule):
         with torch.no_grad():
             # update the hidden layers
             for layer in range(len(self.W)):
-                lrDecay = self.lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
+                lrDecay = lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
                 self.W[layer] += lrDecay * gradW[layer]
                 self.bias[layer] += lrDecay * gradBias[layer]
             if self.Prune is True:
@@ -348,7 +347,7 @@ class MlpEP(jit.ScriptModule):
 
     @jit.script_method
     def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                             ybeta:Optional[torch.Tensor]=None, epoch=1):
+                                  lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch=1):
         gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
 
         m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
@@ -378,7 +377,7 @@ class MlpEP(jit.ScriptModule):
 
                 # update the weight
                 # TODO solve the problem of torch.pow or np.power
-                lrDecay = self.lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
+                lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
                                                      torch.tensor(int(epoch / self.epochDecay)))
                 # print('the decayed lr is:', lrDecay)
                 # print('alpha is:', alpha[layer])
@@ -394,7 +393,7 @@ class MlpEP(jit.ScriptModule):
         self.v_db = v_db_new
 
     @jit.script_method
-    def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], epoch=1):
+    def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch=1):
         '''
         Update weights and bias according to EQ algo
         '''
@@ -405,14 +404,14 @@ class MlpEP(jit.ScriptModule):
             #lrDecay = 0.01*np.power(0.97, epoch)
             #lrDecay = 0.01*np.power(0.5, int(epoch/10))
             if self.randomHidden:
-                lrDecay = self.lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                lrDecay = lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
                 self.W[0] += lrDecay*gradW[0]
                 self.bias[0] += lrDecay*gradBias[0]
             else:
                 for layer in range(len(self.W)):
                     #lrDecay = self.lr[layer]
                     # TODO solve the problem of torch.pow or np.power
-                    lrDecay = self.lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+                    lrDecay = lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
                     #print('the decayed lr is:', lrDecay)
                     # print('alpha is:', alpha[layer])
 
@@ -424,7 +423,7 @@ class MlpEP(jit.ScriptModule):
                     self.W[layer] = self.W[layer].mul(self.W_mask[layer])
 
     @jit.script_method
-    def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], epoch=1):
+    def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch=1):
         '''
         Update weights using the Adam optimizer
         '''
@@ -461,7 +460,7 @@ class MlpEP(jit.ScriptModule):
 
                 # update the weight
                 # TODO solve the problem of torch.pow or np.power
-                lrDecay = self.lr[layer] * torch.pow(torch.tensor(self.coeffDecay), torch.tensor(int(epoch / self.epochDecay)))
+                lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay), torch.tensor(int(epoch / self.epochDecay)))
                 # print('the decayed lr is:', lrDecay)
                 # print('alpha is:', alpha[layer])
                 self.W[layer] += lrDecay*(m_dw_corr/(torch.sqrt(v_dw_corr) + self.epsillon))
@@ -628,7 +627,6 @@ class ConvEP(nn.Module):
         self.dt = jparams['dt']
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
-        self.lr = jparams['lr']
         self.errorEstimate = jparams['errorEstimate']
 
         if jparams['dataset'] == 'mnist':
@@ -910,11 +908,9 @@ class ConvEP(nn.Module):
 
         return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
 
-    def updateConvWeight(self, data, s, seq, P_ind, Peq_ind):
+    def updateConvWeight(self, data, s, seq, P_ind, Peq_ind, lr):
 
         gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
-
-        lr = self.lr
 
         # for i in range(len(self.fc)):
         #     self.fc[i].weight += lr_tab[i] * gradfc[i]

@@ -361,6 +361,24 @@ if jparams['dataset'] == 'mnist':
         # if args.unlabeledPercent != 0 and args.unlabeledPercent != 1:
         #     train_set = UnlabelDataset(train_set, './MNIST_alterLearning', args.unlabeledPercent, Seed=0)
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)
+    elif jparams['action'] == 'semi-supervised_ep':
+        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+                                               transform=torchvision.transforms.Compose(transforms),
+                                               target_transform=ReshapeTransformTarget(10))
+        # flatten the input data to a vector
+        # TODO to be changed if we introduce convolutional layers
+        flatten_dataset = train_set.data.view(60000, -1)
+        targets = train_set.targets
+        semi_seed = 1
+        # seperate the supervised and unsupervised dataset
+        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(flatten_dataset, targets,
+                                                                          jparams['fcLayers'][-1], jparams['n_class'],
+                                                                          jparams['trainLabel_number'],
+                                                                          seed=semi_seed)
+        supervised_loader = torch.utils.data.DataLoader(supervised_dataset, batch_size=jparams['pre_batchSize'],
+                                                        shuffle=True)
+        unsupervised_loader = torch.utils.data.DataLoader(unsupervised_dataset, batch_size=jparams['batchSize'],
+                                                          shuffle=True)
     else:
     #elif jparams['action'] == 'supervised_ep' or jparams['action'] == 'train_conv_ep':
         train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
@@ -385,17 +403,17 @@ if jparams['dataset'] == 'mnist':
     x = train_set.data
     y = train_set.targets
 
-    label_percentage = jparams['label_percentage']
-    if jparams['label_percentage']==1:
+    classLabel_percentage = jparams['classLabel_percentage']
+    if jparams['classLabel_percentage'] == 1:
         class_set = train_set
         layer_set = train_set
     else:
-        class_set = splitClass(x, y, label_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
+        class_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
     #
     # class_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
     #                          transform=torchvision.transforms.Compose(transforms))
 
-        layer_set = splitClass(x, y, label_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms),
+        layer_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms),
                                  target_transform=ReshapeTransformTarget(10))
 
     # layer_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
@@ -567,9 +585,9 @@ if __name__ == '__main__':
 
         for epoch in tqdm(range(jparams['epochs'])):
             if jparams['lossFunction'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, train_loader, epoch)
+                train_error_epoch = train_supervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, epoch)
+                train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
 
             test_error_epoch = test_supervised_ep(net, test_loader)
 
@@ -613,9 +631,9 @@ if __name__ == '__main__':
 
             # train process
             if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, train_loader, epoch)
+                Xth = train_unsupervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, train_loader, epoch)
+                Xth = train_unsupervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
 
             # elif args.Optimizer == 'Adam':
             #     Xth, mW, vW, mBias, vBias = train_unsupervised_ep(net, args, train_loader, epoch, Xth, mW, vW, mBias, vBias)
@@ -666,8 +684,58 @@ if __name__ == '__main__':
             torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
             #print('This is epoch:', epoch, 'The 0 responses neuron is:', max0_indice)
 
-    elif jparams['action'] == 'visu':
+    elif jparams['action'] == 'semi-supervised_ep':
+        print("Training the model with semi-supervised learning")
 
+        PretrainFrame = initDataframe(BASE_PATH, method='supervised', dataframe_to_init='pre_supervised.csv')
+
+        # save the initial network
+        with open(BASE_PATH + prefix + 'model_pre_supervised0.pt', 'wb') as f:
+            torch.jit.save(net, f)
+
+        pretrain_error_list = []
+        pretest_error_list = []
+
+        for epoch in tqdm(range(jparams['pre_epochs'])):
+            if jparams['lossFunction'] == 'MSE':
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+            elif jparams['lossFunction'] == 'Cross-entropy':
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+            pretest_error_epoch = test_supervised_ep(net, test_loader)
+            pretrain_error_list.append(pretrain_error_epoch.item())
+            pretest_error_list.append(pretest_error_epoch.item())
+            PretrainFrame = updateDataframe(BASE_PATH, PretrainFrame, pretrain_error_list, pretest_error_list, 'pre_supervised.csv')
+            # save the entire model
+            with open(BASE_PATH + prefix + 'model_pre_supervised_entire.pt', 'wb') as f:
+                torch.jit.save(net, f)
+
+        SEMIFRAME = initDataframe(BASE_PATH, method='semi-supervised', dataframe_to_init='semi-supervised.csv')
+
+        supervised_test_error_list = []
+        entire_test_error_list = []
+
+        for epoch in tqdm(range(jparams['epochs'])):
+            # supervised reminder
+            if jparams['lossFunction'] == 'MSE':
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+            elif jparams['lossFunction'] == 'Cross-entropy':
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'],
+                                                                     epoch)
+            supervised_test_epoch = test_supervised_ep(net, test_loader)
+            # unsupervised training
+            if jparams['lossFunction'] == 'MSE':
+                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+            elif jparams['lossFunction'] == 'Cross-entropy':
+                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+            entire_test_epoch = test_supervised_ep(net, test_loader)
+
+            supervised_test_error_list.append(supervised_test_epoch.item())
+            entire_test_error_list.append(entire_test_epoch.item())
+            SEMIFRAME = updateDataframe(BASE_PATH, SEMIFRAME, supervised_test_error_list, entire_test_error_list, 'semi-supervised.csv')
+            with open(BASE_PATH + prefix + 'model_semi_entire.pt', 'wb') as f:
+                torch.jit.save(net, f)
+
+    elif jparams['action'] == 'visu':
         # # the hyper-parameters "analysis_preTrain" should be set at 1 at the beginning
         del(jparams)
         # load the json file
@@ -693,15 +761,15 @@ if __name__ == '__main__':
 
         net.eval()
         # reset the dataset
-        label_percentage = jparams['label_percentage']
-        if jparams['label_percentage'] == 1:
+        classLabel_percentage = jparams['classLabel_percentage']
+        if jparams['classLabel_percentage'] == 1:
             class_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                transform=torchvision.transforms.Compose(transforms))
             layer_set = train_set
         else:
-            class_set = splitClass(x, y, label_percentage, seed=seed,
+            class_set = splitClass(x, y, classLabel_percentage, seed=seed,
                                    transform=torchvision.transforms.Compose(transforms))
-            layer_set = splitClass(x, y, label_percentage, seed=seed,
+            layer_set = splitClass(x, y, classLabel_percentage, seed=seed,
                                    transform=torchvision.transforms.Compose(transforms),
                                    target_transform=ReshapeTransformTarget(10))
         if jparams['device'] >= 0:
@@ -726,7 +794,7 @@ if __name__ == '__main__':
 
         # dataframe save classification layer training result
         class_dataframe = initDataframe(BASE_PATH, method='classification_layer',
-                                        dataframe_to_init='classification_layer'+str(label_percentage)+'.csv')
+                                        dataframe_to_init='classification_layer'+str(classLabel_percentage)+'.csv')
         torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
 
         class_train_error_list = []
@@ -743,7 +811,7 @@ if __name__ == '__main__':
             final_test_error_list.append(final_test_error_epoch.item())
             final_loss_error_list.append(final_loss_epoch.item())
             class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
-                                              filename='classification_layer'+str(label_percentage)+'.csv', loss=final_loss_error_list)
+                                              filename='classification_layer'+str(classLabel_percentage)+'.csv', loss=final_loss_error_list)
 
             # save the trained class_net
             torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
