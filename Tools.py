@@ -11,7 +11,6 @@ from scipy import*
 from copy import*
 import matplotlib.pyplot as plt
 import sys
-import pickle
 import pandas as pd
 import shutil
 from tqdm import tqdm
@@ -315,7 +314,6 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
         for batch_idx, (data, targets) in enumerate(train_loader):
             # random signed beta: better approximate the gradient
             net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-
             batchSize = data.size(0)
             # initiate the neurons
             s, P_ind = net.initHidden(batchSize)
@@ -698,7 +696,7 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
         return test_error_av, test_error_max
 
 
-def test_supervised_ep(net, test_loader, record=None):
+def test_supervised_ep(net, jparams, test_loader, record=None):
     '''
     Function to test the network
     '''
@@ -713,22 +711,32 @@ def test_supervised_ep(net, test_loader, record=None):
     corrects_supervised = torch.zeros(1, device=net.device).squeeze()
 
     for batch_idx, (data, targets) in enumerate(test_loader):
-
-        s = net.initState(data)
-
-        if net.cuda:
-            targets = targets.to(net.device)
-            s = [item.to(net.device) for item in s]
-
         # record the total test
         total_test += targets.size()[0]
 
-        #free phase
-        s = net.forward(s)
+        if jparams['convNet'] == 1:
+            # initiate the neurons
+            batchSize = data.size(0)
+            s, P_ind = net.initHidden(batchSize)
+            if net.cuda:
+                targets = targets.to(net.device)
+                s = [item.to(net.device) for item in s]
+                data = data.to(net.device)
+
+            # free phase
+            s, P_ind = net.forward(s, data, P_ind)
+        else:
+            s = net.initState(data)
+
+            if net.cuda:
+                targets = targets.to(net.device)
+                s = [item.to(net.device) for item in s]
+
+            # free phase
+            s = net.forward(s)
 
         # we note the last layer as s_output
         output = s[0].clone().detach()
-
         #
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()

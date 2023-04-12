@@ -742,7 +742,7 @@ class ConvEP(nn.Module):
             dsdt[0] = dsdt[0] + beta*(target-s[0])
 
         for i in range(1, len(self.fcLayers)-1):
-            dsdt.append(-s[i] + rho(self.W[i](s[i+1]).view(s[i+1].size(0), -1), torch.mm(s[i-1], self.W[i-1].weight)))
+            dsdt.append(-s[i] + rho(self.W[i](s[i+1].view(s[i+1].size(0), -1)) + torch.mm(s[i-1], self.W[i-1].weight)))
             # at the same time we flatten the layer before
 
         # Convolutional part

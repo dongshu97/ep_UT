@@ -8,10 +8,8 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 import torchvision
 import torch.optim as optim
-import pickle
 import datetime
 import numpy as np
-import platform
 import pathlib
 import time
 from tqdm import tqdm
@@ -31,273 +29,6 @@ parser.add_argument(
     help='path of json configuration'
 )
 args = parser.parse_args()
-# parser = argparse.ArgumentParser(description='usupervised EP')
-# parser.add_argument(
-#     '--device',
-#     type=int,
-#     default=0,
-#     help='GPU name to use cuda')
-# parser.add_argument(
-#     '--dataset',
-#     type=str,
-#     default="mnist",
-#     help='dataset to be used to train the network : (default = mnist)')
-# # TODO
-# # parser.add_argument(
-# #     '--training-method',
-# #     type=str,
-# #     default='ep',
-# #     help='traning method (default:ep)'
-# # )
-# parser.add_argument(
-#     '--action',
-#     type=str,
-#     default="unsupervised_ep",
-#     help='train or test: (default = unsupervised_ep, other: supervised_ep, test, visu')
-# parser.add_argument(
-#     '--epochs',
-#     type=int,
-#     default=40,
-#     metavar='N',
-#     help='number of epochs to train (default: 100)')
-# parser.add_argument(
-#     '--batchSize',
-#     type=int,
-#     default=118,
-#     help='Batch size (default=128)')
-# parser.add_argument(
-#     '--test_batchSize',
-#     type=int,
-#     default=512,
-#     help='Testing batch size (default=256)')
-# parser.add_argument(
-#     '--dt',
-#     type=float,
-#     default=0.2,
-#     help='time discretization (default: 0.2)')
-# parser.add_argument(
-#     '--T',
-#     type=int,
-#     default=60,
-#     help='number of time steps in the free phase (default: 40) - Let the system relax with oscillators dynamics')
-# parser.add_argument(
-#     '--Kmax',
-#     type=int,
-#     default=20,
-#     help='number of time steps in the backward pass (default: 50)')
-# parser.add_argument(
-#     '--beta',
-#     type=float,
-#     default=0.5,
-#     metavar='BETA',
-#     help='nudging parameter (default: 0.5)')
-# parser.add_argument(
-#     '--clamped',
-#     type=int,
-#     default=1,
-#     help='Clamped state of the network: crossed input are clamped to avoid divergence (default: True)')
-# parser.add_argument(
-#     '--convNet',
-#     type=int,
-#     default=0,
-#     help='whether use the convolutional layers'
-# )
-# # parser.add_argument(
-# #     '--convLayers',
-# #     nargs='+',
-# #     type=int,
-# #     default=[1, 16, 5, 1, 1, 16, 32, 5, 1, 1],
-# #     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
-# # TODO rewrite the argparse for the CNN
-# # we suppose the stride=1
-# parser.add_argument(
-#     '--C_list',
-#     nargs='+',
-#     type=int,
-#     default=[1, 32, 64],
-#     help='channel list (default: [])')
-# parser.add_argument(
-#     '--padding',
-#     type=int,
-#     default=0,
-#     help='padding or not (default: 0, else:1)')
-# parser.add_argument(
-#     '--convF',
-#     type=int,
-#     default=5,
-#     metavar='F',
-#     help='convolution filter size (default: 5)')
-# parser.add_argument(
-#     '--Fpool',
-#     type=int,
-#     default=2,
-#     metavar='Fp',
-#     help='pooling filter size (default: 2)')
-# parser.add_argument(
-#     '--fcLayers',
-#     nargs='+',
-#     type=int,
-#     default=[784, 1024, 512],
-#     help='The parameters of convNet, each conv layer has 5 parameter: in_channels, out_channels, K/F, S, P')
-# parser.add_argument(
-#     '--lr',
-#     nargs='+',
-#     type=float,
-#     default=[0.0107, 0.00257],
-#     help='learning rates')
-# parser.add_argument(
-#     '--activation_function',
-#     type=str,
-#     default='hardsigm',
-#     help='activation function')
-# parser.add_argument(
-#     '--Optimizer',
-#     type=str,
-#     default='SGD',
-#     help='the optimizer to be used (default=SGD, else:Adam)'
-# )
-# parser.add_argument(
-#     '--errorEstimate',
-#     type=str,
-#     default='symmetric',
-#     help='Two different way to estimate the loss (default=one-sided, else:symmetric)'
-# )
-# parser.add_argument(
-#     '--lossFunction',
-#     type=str,
-#     default='MSE',
-#     help='Define the type of loss function (default=MSE, else:Cross-entropy)'
-# )
-# parser.add_argument(
-#     '--eta',
-#     type=float,
-#     default=0.2,
-#     help='the coefficient for regulating the homeostasis effect (default: 0.1)'
-# )
-# parser.add_argument(
-#     '--gamma',
-#     type=float,
-#     default=0.668,
-#     help='the coefficient for regulating the homeostasis effect (default: 0.2)'
-# )
-# parser.add_argument(
-#     '--nudge_N',
-#     type=int,
-#     default=5,
-#     help='the number of winners to be nudged (default: 1)'
-# )
-# parser.add_argument(
-#     '--n_class',
-#     type=int,
-#     default=10,
-#     help='the number of class (default = 10)'
-# )
-# parser.add_argument(
-#     '--class_activation',
-#     type=str,
-#     default='softmax',
-#     help='activation function of the added classification layer')
-# parser.add_argument(
-#     '--class_lr',
-#     type=float,
-#     default=0.045,
-#     help='the learning rate of the classification layer'
-# )
-# parser.add_argument(
-#     '--class_epoch',
-#     type=int,
-#     default=30,
-#     help='the epoch for training the classification layer'
-# )
-# parser.add_argument(
-#     '--class_Optimizer',
-#     type=str,
-#     default='Adam',
-#     help='the Optimizer used for the classification layer'
-# )
-# parser.add_argument(
-#     '--coeffDecay',
-#     type=float,
-#     default=1,
-#     help='the coefficient of learning rate Decay(default=1, other:0.5, 0.7)'
-# )
-# parser.add_argument(
-#     '--gammaDecay',
-#     type=float,
-#     default=1,
-#     help='the coefficient of Homeostasis Decay(default=1, other:0.5,0.6)'
-# )
-# parser.add_argument(
-#     '--epochDecay',
-#     type=float,
-#     default=1,
-#     help='the epoch to decay the learning rate (default=10, other:5, 15)'
-# )
-# parser.add_argument(
-#     '--weightNormalization',
-#     type=int,
-#     default=0,
-#     help='to decide whether to use the weight normalization'
-# )
-# parser.add_argument(
-#     '--randomHidden',
-#     type=int,
-#     default=0,
-#     help='update only the weights of output layers'
-# )
-# parser.add_argument(
-#     '--Dropout',
-#     type=int,
-#     default=0,
-#     help='to decide whether to use the Dropout'
-# )
-# parser.add_argument(
-#     '--dropProb',
-#     nargs='+',
-#     type=float,
-#     default=[0, 0],
-#     help='to decide the probability of dropout'
-# )
-# parser.add_argument(
-#     '--torchSeed',
-#     type=int,
-#     default=0,
-#     help='to generate the reproductive result'
-# )
-# parser.add_argument(
-#     '--analysis_preTrain',
-#     type=str,
-#     default=0,
-#     help='whether to load the trained model'
-# )
-# parser.add_argument(
-#     '--imWeights',
-#     type=int,
-#     default=0,
-#     help='whether we imshow the weights of synapses'
-# )
-# parser.add_argument(
-#     '--maximum_activation',
-#     type=int,
-#     default=0,
-#     help='draw the maximum activation input for each neuron'
-# )
-# parser.add_argument(
-#     '--imShape',
-#     nargs='+',
-#     type=int,
-#     default=[28, 28, 32, 32],
-#     help='decide the size for each imshow of weights'
-# )
-# parser.add_argument(
-#     '--display',
-#     nargs='+',
-#     type=int,
-#     default=[10, 10, 10, 10],
-#     help='decide the number of neurons whose weights are presented'
-# )
-# # input the args
-# args = parser.parse_args()
 
 # use json to load the configuration parameters
 if os.name != 'posix':
@@ -589,7 +320,7 @@ if __name__ == '__main__':
             elif jparams['lossFunction'] == 'Cross-entropy':
                 train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
 
-            test_error_epoch = test_supervised_ep(net, test_loader)
+            test_error_epoch = test_supervised_ep(net, jparams, test_loader)
 
             #train_error_list.append(train_error.cpu().item())
             train_error_list.append(train_error_epoch.item())
@@ -599,8 +330,11 @@ if __name__ == '__main__':
             # save the inference model
             #t orch.save(net.state_dict(), BASE_PATH)
             # save the entire model
-            with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
-                torch.jit.save(net, f)
+            if jparams['convNet'] == 1:
+                torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_entire.pt')
+            else:
+                with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
+                    torch.jit.save(net, f)
             # torch.save(net, BASE_PATH + prefix + 'model_entire.pt')
 
     elif jparams['action'] == 'unsupervised_ep':
@@ -701,7 +435,7 @@ if __name__ == '__main__':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
-            pretest_error_epoch = test_supervised_ep(net, test_loader)
+            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader)
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
             PretrainFrame = updateDataframe(BASE_PATH, PretrainFrame, pretrain_error_list, pretest_error_list, 'pre_supervised.csv')
@@ -721,13 +455,13 @@ if __name__ == '__main__':
             elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'],
                                                                      epoch)
-            supervised_test_epoch = test_supervised_ep(net, test_loader)
+            supervised_test_epoch = test_supervised_ep(net, jparams, test_loader)
             # unsupervised training
             if jparams['lossFunction'] == 'MSE':
                 Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, jparams['lr'], epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
                 Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, jparams['lr'], epoch)
-            entire_test_epoch = test_supervised_ep(net, test_loader)
+            entire_test_epoch = test_supervised_ep(net, jparams, test_loader)
 
             supervised_test_error_list.append(supervised_test_epoch.item())
             entire_test_error_list.append(entire_test_epoch.item())
@@ -828,7 +562,7 @@ if __name__ == '__main__':
         path_YinYang.mkdir(parents=True, exist_ok=True)
 
         if jparams['action'] == 'supervised_ep':
-            test_error_final, test_class_record = test_supervised_ep(net, test_loader, record=1)
+            test_error_final, test_class_record = test_supervised_ep(net, jparams, test_loader, record=1)
         elif jparams['action'] == 'unsupervised_ep':
             # class process
             response, max0_indice = classify(net, jparams, class_loader)
