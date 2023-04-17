@@ -92,7 +92,7 @@ if jparams['dataset'] == 'mnist':
         # if args.unlabeledPercent != 0 and args.unlabeledPercent != 1:
         #     train_set = UnlabelDataset(train_set, './MNIST_alterLearning', args.unlabeledPercent, Seed=0)
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)
-    elif jparams['action'] == 'semi-supervised_ep':
+    elif jparams['action'] == 'semi-supervised_ep' or jparams['splitData'] == 1:
         train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                transform=torchvision.transforms.Compose(transforms),
                                                target_transform=ReshapeTransformTarget(10))
@@ -100,7 +100,7 @@ if jparams['dataset'] == 'mnist':
         # TODO to be changed if we introduce convolutional layers
         flatten_dataset = train_set.data.view(60000, -1)
         targets = train_set.targets
-        semi_seed = 1
+        semi_seed = 41
         # seperate the supervised and unsupervised dataset
         supervised_dataset, unsupervised_dataset = Semisupervised_dataset(flatten_dataset, targets,
                                                                           jparams['fcLayers'][-1], jparams['n_class'],
@@ -315,10 +315,20 @@ if __name__ == '__main__':
         test_error_list = []
 
         for epoch in tqdm(range(jparams['epochs'])):
-            if jparams['lossFunction'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
+            if jparams['splitData']:
+                if jparams['lossFunction'] == 'MSE':
+                    train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['lr'], epoch)
+                elif jparams['lossFunction'] == 'Cross-entropy':
+                    if jparams['convNet']:
+                        raise ValueError("convNet can not be integrated with CNN yet")
+                    train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['lr'], epoch)
+            else:
+                if jparams['lossFunction'] == 'MSE':
+                    train_error_epoch = train_supervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
+                elif jparams['lossFunction'] == 'Cross-entropy':
+                    if jparams['convNet']:
+                        raise ValueError("convNet can not be integrated with CNN yet")
+                    train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
 
             test_error_epoch = test_supervised_ep(net, jparams, test_loader)
 
