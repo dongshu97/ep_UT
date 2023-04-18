@@ -11,8 +11,13 @@ from Data import *
 from Network_optuna import *
 from Tools_optuna import *
 
+if os.name != 'posix':
+    prefix = '\\'
+else:
+    prefix = '/'
+
 # load the parameters in optuna_config
-with open('.\optuna_config.json') as f:
+with open('.'+prefix + 'optuna_config.json') as f:
   pre_config = json.load(f)
 
 # define the activation function

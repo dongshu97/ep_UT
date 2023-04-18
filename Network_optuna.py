@@ -320,7 +320,7 @@ class MlpEP(jit.ScriptModule):
 
     @jit.script_method
     def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                             lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch=1):
+                             lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
 
         '''update the weights and biases of network with a softmax output'''
 
@@ -337,7 +337,7 @@ class MlpEP(jit.ScriptModule):
 
     @jit.script_method
     def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                                  lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch=1):
+                                  lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
         gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
 
         m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
@@ -383,7 +383,7 @@ class MlpEP(jit.ScriptModule):
         self.v_db = v_db_new
 
     @jit.script_method
-    def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch=1):
+    def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
         '''
         Update weights and bias according to EQ algo
         '''
@@ -413,7 +413,7 @@ class MlpEP(jit.ScriptModule):
                     self.W[layer] = self.W[layer].mul(self.W_mask[layer])
 
     @jit.script_method
-    def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch=1):
+    def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
         '''
         Update weights using the Adam optimizer
         '''
