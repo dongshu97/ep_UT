@@ -35,6 +35,12 @@ elif pre_config['activation_function'] == 'hardsigm':
     def rhop(x):
         return (x >= 0) & (x <= 1)
 
+elif pre_config['activation_function'] == 'half_hardsigm':
+    def rho(x):
+        return (1 + F.hardtanh(x - 1))*0.5
+    def rhop(x):
+        return ((x >= 0) & (x <= 2))*0.5
+
 elif pre_config['activation_function'] == 'tanh':
     def rho(x):
         return torch.tanh(x)
@@ -181,7 +187,7 @@ def jparamsCreate(pre_config, trial):
         jparams["beta"] = trial.suggest_float("beta", 0.05, 0.5)
         lr = []
         for i in range(len(jparams["fcLayers"]) - 1):
-            lr_i = trial.suggest_float("lr" + str(i), 1e-7, 0.1, log=True)
+            lr_i = trial.suggest_float("lr" + str(i), 1e-6, 1e-2, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
         jparams["lr"] = lr.copy()
@@ -194,18 +200,32 @@ def jparamsCreate(pre_config, trial):
             jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
             # jparams["lossFunction"] = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
 
+        # TODO add the dropout parameters
+        # if jparams["Dropout"]:
+        #     dropProb = []
+        #     for i in range(len(jparams["fcLayers"]) - 1):
+        #         if jparams["fcLayers"][i+1] == jparams["n_class"]:
+        #             drop_i = 0
+        #         else:
+        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
+        #         # to verify whether we need to change the name of drop_i
+        #         dropProb.append(drop_i)
+        #     jparams["dropProb"] = dropProb.copy()
+        #     jparams["dropProb"].reverse()
+        #
         if jparams["Dropout"]:
             dropProb = []
-            for i in range(len(jparams["fcLayers"]) - 1):
-                if jparams["fcLayers"][i+1] == jparams["n_class"]:
+            dropProb.append(0.2)
+            for i in range(1, len(jparams["fcLayers"])):
+                if jparams["fcLayers"][i] == jparams["n_class"]:
                     drop_i = 0
                 else:
                     drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                # to verify whether we need to change the name of drop_i
                 dropProb.append(drop_i)
-            jparams["dropProb"] = dropProb.copy()
-            jparams["dropProb"].reverse()
-        #
+        jparams["dropProb"] = dropProb.copy()
+        # jparams["dropProb"] = [0.2, 0.5, 0]
+        jparams["dropProb"].reverse()
+
         # if jparams["Prune"] == "Initiation":
         #     pruneAmount = []
         #     for i in range(len(jparams["fcLayers"]) - 1):

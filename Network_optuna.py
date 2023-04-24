@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.jit as jit
 import torch.nn.utils.prune as prune
 
-from main import rho, rhop
+from optuna_optim import rho, rhop
 from typing import List, Optional, Tuple
 
 
@@ -488,15 +488,15 @@ class MlpEP(jit.ScriptModule):
         # we normalize the weight by the average norm
         self.W[0] = (self.W[0]/norm)*scale
 
-    @jit.script_method
-    def inferenceWeight(self, dropProb:List[float]):
-        for i in range(len(dropProb)-1):
-            self.W[i] = self.W[i]*dropProb[i+1]
-
-    @jit.script_method
-    def recoverWeight(self, dropProb:List[float]):
-        for i in range(len(dropProb)-1):
-            self.W[i] = self.W[i]/dropProb[i+1]
+    # @jit.script_method
+    # def inferenceWeight(self, dropProb:List[float]):
+    #     for i in range(len(dropProb)-1):
+    #         self.W[i] = self.W[i]*dropProb[i+1]
+    #
+    # @jit.script_method
+    # def recoverWeight(self, dropProb:List[float]):
+    #     for i in range(len(dropProb)-1):
+    #         self.W[i] = self.W[i]/dropProb[i+1]
 
 
         # # we devide the weight by the maxmium possible value

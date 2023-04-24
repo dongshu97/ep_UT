@@ -15,7 +15,7 @@ import pandas as pd
 import shutil
 from tqdm import tqdm
 import torch.nn.functional as F
-from Network import*
+from Network_optuna import *
 
 def classify(net, jparams, class_loader):
 
