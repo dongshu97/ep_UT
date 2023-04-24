@@ -5,7 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.jit as jit
 import torch.nn.utils.prune as prune
-from optuna_optim import rho, rhop
+
+from main import rho, rhop
 from typing import List, Optional, Tuple
 
 
@@ -16,6 +17,15 @@ but the problem is that, there are different variables for Conv class than the M
 so whether we will merge s and h together?
 '''
 
+
+# class forwardNN(nn.Module):
+#   def __init__(self, fcLayers, ep_W):
+#     super(forwardNN, self).__init__()
+#     self.fcLayers = fcLayers
+#     self.W = nn.ModuleList(None)
+#     for i in range(len(jparams['fcLayers']) - 1):
+#       self.W.extend([nn.Linear(jparams['fcLayers'][i+1], jparams['fcLayers'][i], bias=False)])
+#       self.W[i].weights.data = ep_W[i]
 
 class forwardNN(nn.Module):
     def __init__(self, fcLayers, ep_W):
@@ -51,7 +61,7 @@ class MlpEP(jit.ScriptModule):
         self.randomHidden = jparams['randomHidden']
         self.gamma = jparams['gamma']
         self.Prune = False
-        self.W_mask = [1,1]
+        self.W_mask = [1, 1]
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -121,7 +131,7 @@ class MlpEP(jit.ScriptModule):
         p_distribut = []
         # bernoulli = torch.distributions.bernoulli.Bernoulli(total_count=1, probs=1-p)
         if y is None:
-            for layer in range(len(s)-1):
+            for layer in range(len(s)):
                 if p[layer] == 0:
                     p_distribut.append(torch.ones(s[layer].size()))
                 else:
@@ -134,9 +144,12 @@ class MlpEP(jit.ScriptModule):
             else:
                 binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[0]))
                 y_distribut = binomial.sample(y.size())
-            for layer in range(len(s)-1):
-                binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[layer+1]))
-                p_distribut.append(binomial.sample(s[layer].size()))
+            for layer in range(len(s)):
+                if p[layer+1] == 0:
+                    p_distribut.append(torch.ones(s[layer].size()))
+                else:
+                    binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[layer+1]))
+                    p_distribut.append(binomial.sample(s[layer].size()))
             return p_distribut, y_distribut
 
     @jit.script_method
@@ -279,7 +292,6 @@ class MlpEP(jit.ScriptModule):
         if self.errorEstimate == 'symmetric':
             coef = coef*0.5
 
-        alpha = 0.1
         gradW, gradBias = [], []
 
         with torch.no_grad():
@@ -306,12 +318,12 @@ class MlpEP(jit.ScriptModule):
 
         with torch.no_grad():
             if ybeta is None:
-                gradW.append(-torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)))
-                gradBias.append(-(y-target).sum(0))
+                gradW.append(-(1/batch_size)*torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)))
+                gradBias.append(-(1/batch_size)*(y-target).sum(0))
             else:
-                gradW.append(-0.5*(torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)) +
+                gradW.append(-(0.5/batch_size)*(1/batch_size)*(torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)) +
                                           torch.mm(torch.transpose(rho(heq[0]), 0, 1), (ybeta-target))))
-                gradBias.append(-0.5*(y+ybeta-2*target).sum(0))
+                gradBias.append(-(0.5/batch_size)*(y+ybeta-2*target).sum(0))
             for layer in range(len(h)-1):
                 gradW.append(coef * (torch.mm(torch.transpose(rho(h[layer + 1]), 0, 1), rho(h[layer]))
                                      - torch.mm(torch.transpose(rho(heq[layer + 1]), 0, 1), rho(heq[layer]))))
@@ -476,6 +488,16 @@ class MlpEP(jit.ScriptModule):
         # we normalize the weight by the average norm
         self.W[0] = (self.W[0]/norm)*scale
 
+    @jit.script_method
+    def inferenceWeight(self, dropProb:List[float]):
+        for i in range(len(dropProb)-1):
+            self.W[i] = self.W[i]*dropProb[i+1]
+
+    @jit.script_method
+    def recoverWeight(self, dropProb:List[float]):
+        for i in range(len(dropProb)-1):
+            self.W[i] = self.W[i]/dropProb[i+1]
+
 
         # # we devide the weight by the maxmium possible value
         # max_value = torch.max(self.W[0])
@@ -517,7 +539,7 @@ class MlpEP(jit.ScriptModule):
 
         return unsupervised_targets, N_maxindex
 
-    def initState(self, data):
+    def initState(self, data, drop_visible=None):
         '''
         Init the state of the network
         State if a dict, each layer is state["S_layer"]
@@ -527,19 +549,23 @@ class MlpEP(jit.ScriptModule):
         size = data.size(0)
         for layer in range(len(self.fcLayers)-1):
             state.append(torch.zeros(size, self.fcLayers[layer], requires_grad=False))
-
-        state.append(data.float())
+        if drop_visible is None:
+            state.append(data.float())
+        else:
+            state.append(drop_visible*data.float())
 
         return state
 
-    def initHidden(self, fcLayers, data):
+    def initHidden(self, data, drop_visible=None):
         h = []
         size = data.size(0)
-        y = torch.zeros(size, fcLayers[0], requires_grad=False)
-        for layer in range(1, len(fcLayers)-1):
-            h.append(torch.zeros(size, fcLayers[layer], requires_grad=False))
-
-        h.append(data.float())
+        y = torch.zeros(size, self.fcLayers[0], requires_grad=False)
+        for layer in range(1, len(self.fcLayers)-1):
+            h.append(torch.zeros(size, self.fcLayers[layer], requires_grad=False))
+        if drop_visible is None:
+            h.append(data.float())
+        else:
+            h.append(drop_visible*data.float())
 
         return h, y
 

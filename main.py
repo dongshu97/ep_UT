@@ -82,7 +82,7 @@ if jparams['dataset'] == 'mnist':
     if jparams['convNet']:
         transforms = [torchvision.transforms.ToTensor()]
     else:
-        transforms = [torchvision.transforms.ToTensor(), ReshapeTransform((-1,))]
+        transforms = [torchvision.transforms.ToTensor(),ReshapeTransform((-1,))]
 
     # Download the MNIST dataset
     if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' or jparams['action'] == 'test':
@@ -137,7 +137,9 @@ if jparams['dataset'] == 'mnist':
     classLabel_percentage = jparams['classLabel_percentage']
     if jparams['classLabel_percentage'] == 1:
         class_set = train_set
-        layer_set = train_set
+        layer_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+                                               transform=torchvision.transforms.Compose(transforms),
+                                               target_transform=ReshapeTransformTarget(10))
     else:
         class_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
     #
@@ -192,6 +194,7 @@ elif jparams['dataset'] == 'CIFAR10':
 
 
 # define the activation function
+
 if jparams['activation_function'] == 'sigm':
     def rho(x):
         return 1/(1+torch.exp(-(4*(x-0.5))))
@@ -205,6 +208,11 @@ elif jparams['activation_function'] == 'hardsigm':
 
     def rhop(x):
         return (x >= 0) & (x <= 1)
+elif jparams['activation_function'] == 'half_hardsigm':
+    def rho(x):
+        return (1 + F.hardtanh(x - 1))*0.5
+    def rhop(x):
+        return ((x >= 0) & (x <= 2))*0.5
 
 elif jparams['activation_function'] == 'tanh':
     def rho(x):
@@ -330,7 +338,13 @@ if __name__ == '__main__':
                         raise ValueError("convNet can not be integrated with CNN yet")
                     train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
 
+            # if jparams['Dropout']:
+            #     net.inferenceWeight(jparams['dropProb'])
+
             test_error_epoch = test_supervised_ep(net, jparams, test_loader)
+
+            # if jparams['Dropout']:
+            #     net.recoverWeight(jparams['dropProb'])
 
             #train_error_list.append(train_error.cpu().item())
             train_error_list.append(train_error_epoch.item())
@@ -338,7 +352,8 @@ if __name__ == '__main__':
 
             DATAFRAME = updateDataframe(BASE_PATH, DATAFRAME, train_error_list, test_error_list)
             # save the inference model
-            #t orch.save(net.state_dict(), BASE_PATH)
+            # torch.save(net.state_dict(), BASE_PATH)
+
             # save the entire model
             if jparams['convNet'] == 1:
                 torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_entire.pt')
@@ -516,10 +531,8 @@ if __name__ == '__main__':
             layer_set = splitClass(x, y, classLabel_percentage, seed=seed,
                                    transform=torchvision.transforms.Compose(transforms),
                                    target_transform=ReshapeTransformTarget(10))
-        if jparams['device'] >= 0:
-            class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
-        else:
-            class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
+
+        class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
         layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=jparams['test_batchSize'], shuffle=True)
 

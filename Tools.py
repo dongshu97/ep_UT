@@ -168,6 +168,7 @@ def classify_network(net, class_net, jparams, layer_loader):
         x = s[0].clone()
         output = class_net.forward(x)
         # calculate the loss
+
         loss = criterion(output, targets.to(torch.float32))
         # backpropagation
         loss.backward()
@@ -239,10 +240,13 @@ def train_supervised_crossEntropy(net, jparams, train_loader, lr, epoch):
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
-        h, y = net.initHidden(jparams['fcLayers'], data)
+        h, y = net.initHidden(data)
 
         if jparams['Dropout']:
             p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'], y=y)
+            del(h)
+            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
         else:
             p_distribut, y_distribut = None, None
 
@@ -363,11 +367,13 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
 
             # random signed beta: better approximate the gradient
             net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-
             s = net.initState(data)
 
             if jparams['Dropout']:
                 p_distribut = net.mydropout(s, p=jparams['dropProb'])
+                del(s)
+                s = net.initState(data, drop_visible=p_distribut[-1])
+                p_distribut = p_distribut[:-1]
             else:
                 p_distribut = None
 
@@ -439,10 +445,13 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
-        h, y = net.initHidden(jparams['fcLayers'], data)
+        h, y = net.initHidden(data)
 
         if jparams['Dropout']:
             p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'], y=y)
+            del(h)
+            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
         else:
             p_distribut, y_distribut = None, None
 
@@ -543,6 +552,9 @@ def train_unsupervised_ep(net, jparams, train_loader, lr, epoch):
 
         if jparams['Dropout']:
             p_distribut = net.mydropout(s, p=jparams['dropProb'])
+            del(s)
+            s = net.initState(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
         else:
             p_distribut = None
         # print('This distribut is:', p_distribut)
@@ -638,21 +650,33 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
     correct_max_test = torch.zeros(1, device=net.device).squeeze()
 
     for batch_idx, (data, targets) in enumerate(test_loader):
-
-        s = net.initState(data)
-
-        if net.cuda:
-            targets = targets.to(net.device)
-            s = [item.to(net.device) for item in s]
-
         # record the total test
         total_test += targets.size()[0]
 
-        # free phase
-        s = net.forward(s)
+        if jparams['lossFunction'] == 'MSE':
+            s = net.initState(data)
 
-        # we note the last layer as s_output
-        output = s[0].clone()
+            if net.cuda:
+                targets = targets.to(net.device)
+                s = [item.to(net.device) for item in s]
+
+            # free phase
+            s = net.forward(s)
+
+            # we note the last layer as s_output
+            output = s[0].clone().detach()
+        elif jparams['lossFunction'] == 'Cross-entropy':
+            # init the hidden layers
+            h, y = net.initHidden(data)
+
+            if net.cuda:
+                targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
+                h = [item.to(net.device) for item in h]  # no need to put data on the GPU as data is included in s!
+
+            # forward
+            h, y = net.forward_softmax(h)
+
+            output = y.clone().detach()
 
         '''average value'''
         classvalue = torch.zeros(output.size(0), jparams['n_class'], device=net.device)
@@ -713,31 +737,39 @@ def test_supervised_ep(net, jparams, test_loader, record=None):
     for batch_idx, (data, targets) in enumerate(test_loader):
         # record the total test
         total_test += targets.size()[0]
+        if jparams['lossFunction'] == 'MSE':
+            if jparams['convNet'] == 1:
+                # initiate the neurons
+                batchSize = data.size(0)
+                s, P_ind = net.initHidden(batchSize)
+                if net.cuda:
+                    targets = targets.to(net.device)
+                    s = [item.to(net.device) for item in s]
+                    data = data.to(net.device)
 
-        if jparams['convNet'] == 1:
-            # initiate the neurons
-            batchSize = data.size(0)
-            s, P_ind = net.initHidden(batchSize)
+                # free phase
+                s, P_ind = net.forward(s, data, P_ind)
+            else:
+                s = net.initState(data)
+                # TODO modify the weight for the inference
+                if net.cuda:
+                    targets = targets.to(net.device)
+                    s = [item.to(net.device) for item in s]
+
+                # free phase
+                s = net.forward(s)
+
+            # we note the last layer as s_output
+            output = s[0].clone().detach()
+        elif jparams['lossFunction'] == 'Cross-entropy':
+            # init the hidden layers
+            h, y = net.initHidden(data)
             if net.cuda:
                 targets = targets.to(net.device)
-                s = [item.to(net.device) for item in s]
-                data = data.to(net.device)
-
+                h = [item.to(net.device) for item in h]
             # free phase
-            s, P_ind = net.forward(s, data, P_ind)
-        else:
-            s = net.initState(data)
-
-            if net.cuda:
-                targets = targets.to(net.device)
-                s = [item.to(net.device) for item in s]
-
-            # free phase
-            s = net.forward(s)
-
-        # we note the last layer as s_output
-        output = s[0].clone().detach()
-        #
+            h, y = net.forward_softmax(h)
+            output = y.clone().detach()
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()
 
