@@ -82,7 +82,7 @@ if jparams['dataset'] == 'mnist':
     if jparams['convNet']:
         transforms = [torchvision.transforms.ToTensor()]
     else:
-        transforms = [torchvision.transforms.ToTensor(),ReshapeTransform((-1,))]
+        transforms = [torchvision.transforms.ToTensor(), ReshapeTransform((-1,))]
 
     # Download the MNIST dataset
     if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' or jparams['action'] == 'test':
@@ -98,13 +98,16 @@ if jparams['dataset'] == 'mnist':
                                                target_transform=ReshapeTransformTarget(10))
         # flatten the input data to a vector
         # TODO to be changed if we introduce convolutional layers
-        flatten_dataset = train_set.data.view(60000, -1)
+        # if jparams['convNet']:
+        #     flatten_dataset = train_set.data.reshape(60000, 1, 28, 28)
+        # else:
+        #     flatten_dataset = train_set.data.view(60000, -1)
         targets = train_set.targets
         semi_seed = 41
         # seperate the supervised and unsupervised dataset
-        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(flatten_dataset, targets,
+        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
                                                                           jparams['fcLayers'][-1], jparams['n_class'],
-                                                                          jparams['trainLabel_number'],
+                                                                          jparams['trainLabel_number'], transform=torchvision.transforms.Compose(transforms),
                                                                           seed=semi_seed)
         supervised_loader = torch.utils.data.DataLoader(supervised_dataset, batch_size=jparams['pre_batchSize'],
                                                         shuffle=True)
@@ -240,11 +243,19 @@ if __name__ == '__main__':
 
     BASE_PATH, name = createPath()
 
-    # we create the network
+    # we create the network and define the  parameters
+    if jparams['pre_epochs'] > 0:
+        initial_lr = jparams['pre_lr']
+    else:
+        initial_lr = jparams['lr']
+
     if jparams['convNet']:
         net = ConvEP(jparams)
     else:
         net = torch.jit.script(MlpEP(jparams))
+
+    # we define the optimizer
+    optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
 
     # we load the pre-trained network
     if jparams['analysis_preTrain']:
@@ -325,18 +336,18 @@ if __name__ == '__main__':
         for epoch in tqdm(range(jparams['epochs'])):
             if jparams['splitData']:
                 if jparams['lossFunction'] == 'MSE':
-                    train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['lr'], epoch)
+                    train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
                 elif jparams['lossFunction'] == 'Cross-entropy':
                     if jparams['convNet']:
                         raise ValueError("convNet can not be integrated with CNN yet")
-                    train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['lr'], epoch)
+                    train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
             else:
                 if jparams['lossFunction'] == 'MSE':
-                    train_error_epoch = train_supervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
+                    train_error_epoch = train_supervised_ep(net, jparams, train_loader, optimizer, epoch)
                 elif jparams['lossFunction'] == 'Cross-entropy':
                     if jparams['convNet']:
                         raise ValueError("convNet can not be integrated with CNN yet")
-                    train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
+                    train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
 
             # if jparams['Dropout']:
             #     net.inferenceWeight(jparams['dropProb'])
@@ -390,12 +401,9 @@ if __name__ == '__main__':
 
             # train process
             if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
+                Xth = train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, train_loader, jparams['lr'], epoch)
-
-            # elif args.Optimizer == 'Adam':
-            #     Xth, mW, vW, mBias, vBias = train_unsupervised_ep(net, args, train_loader, epoch, Xth, mW, vW, mBias, vBias)
+                Xth = train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
 
             # one2one class process
             response, max0_indice = classify(net, jparams, class_loader)
@@ -457,9 +465,9 @@ if __name__ == '__main__':
 
         for epoch in tqdm(range(jparams['pre_epochs'])):
             if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
             pretest_error_epoch = test_supervised_ep(net, jparams, test_loader)
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
@@ -472,20 +480,22 @@ if __name__ == '__main__':
 
         supervised_test_error_list = []
         entire_test_error_list = []
+        # define unsupervised optimizer
+        unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
         for epoch in tqdm(range(jparams['epochs'])):
             # supervised reminder
             if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'],
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
                                                                      epoch)
             supervised_test_epoch = test_supervised_ep(net, jparams, test_loader)
             # unsupervised training
             if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             entire_test_epoch = test_supervised_ep(net, jparams, test_loader)
 
             supervised_test_error_list.append(supervised_test_epoch.item())
