@@ -26,22 +26,24 @@ class ReshapeTransformTarget:
         return target_onehot.scatter_(1, target.long(), 1).squeeze(0)
 
 
-class DigitsDataset(Dataset):
-    def __init__(self, images, labels=None, transforms=None, target_transforms=None):
+class myDataset(Dataset):
+    def __init__(self, images, labels, transform=None, target_transform=None):
         self.x = images
         self.y = labels
-        self.transforms = transforms
-        self.target_transforms = target_transforms
+        self.transform = transform
+        self.target_transform = target_transform
 
     def __getitem__(self, i):
-        data = self.x[i, :]
+        data = self.x[i, :].numpy()
         target = self.y[i]
+        # data, label = self.data[item].numpy(), self.targets[item]
+        data = Image.fromarray(data)
 
-        if self.transforms:
-            data = self.transforms(data)
+        if self.transform:
+            data = self.transform(data)
 
-        if self.target_transforms:
-            target = self.target_transforms(target)
+        if self.target_transform:
+            target = self.target_transform(target)
 
         if self.y is not None:
             return (data, target)
@@ -161,28 +163,28 @@ class splitClass(Dataset):
         return len(self.targets)
 
 
-class ClassDataset(Dataset):
-    def __init__(self, root, test_set, seed, transform=None, target_transform=None):
-
-        seedfile = 'seed' + str(seed) + '.txt'
-        filePath = os.path.join(root, seedfile)
-        images_indices = np.loadtxt(filePath).astype(int)
-        self.data = test_set.data[images_indices, :]
-        self.transform = transform
-        self.targets = np.array(test_set.targets)[images_indices]
-        self.target_transform = target_transform
-
-    def __getitem__(self, item):
-        img, label = self.data[item].numpy(), self.targets[item]
-        img = Image.fromarray(img)
-        if self.transform is not None:
-            img = self.transform(img)
-        if self.target_transform is not None:
-            label = self.target_transform(label)
-        return img, label
-
-    def __len__(self):
-        return len(self.targets)
+# class ClassDataset(Dataset):
+#     def __init__(self, root, test_set, seed, transform=None, target_transform=None):
+#
+#         seedfile = 'seed' + str(seed) + '.txt'
+#         filePath = os.path.join(root, seedfile)
+#         images_indices = np.loadtxt(filePath).astype(int)
+#         self.data = test_set.data[images_indices, :]
+#         self.transform = transform
+#         self.targets = np.array(test_set.targets)[images_indices]
+#         self.target_transform = target_transform
+#
+#     def __getitem__(self, item):
+#         img, label = self.data[item].numpy(), self.targets[item]
+#         img = Image.fromarray(img)
+#         if self.transform is not None:
+#             img = self.transform(img)
+#         if self.target_transform is not None:
+#             label = self.target_transform(label)
+#         return img, label
+#
+#     def __len__(self):
+#         return len(self.targets)
 
 
 def generate_N_targets_label(targets, number_per_class, output_neurons):
@@ -193,7 +195,7 @@ def generate_N_targets_label(targets, number_per_class, output_neurons):
     return torch.from_numpy(N_targets)
 
 
-def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_number, seed=1):
+def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_number, transform, seed=1):
 
     fraction = labeled_number/len(targets)
     # we split the dataset for supervised training and unsupervised training
@@ -209,9 +211,10 @@ def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_
         N_Y_super = torch.nn.functional.one_hot(Y_super, num_classes=-1)
 
     # we load the target
-    dataset_super = torch.utils.data.TensorDataset(X_super, N_Y_super)
-
-    dataset_unsuper = torch.utils.data.TensorDataset(X_unsuper, Y_unsuper)   # the one-hot encoding is not applied
+    dataset_super = myDataset(X_super, N_Y_super, transform=transform, target_transform=None)
+    dataset_unsuper = myDataset(X_unsuper, Y_unsuper, transform=transform, target_transform=None) # no one-hot coding
+    # dataset_super = torch.utils.data.TensorDataset(transform(X_super), N_Y_super)
+    # dataset_unsuper = torch.utils.data.TensorDataset(transform(X_unsuper), Y_unsuper) # no one-hot coding
 
     return dataset_super, dataset_unsuper
 
