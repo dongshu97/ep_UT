@@ -103,7 +103,8 @@ if jparams['dataset'] == 'mnist':
         # else:
         #     flatten_dataset = train_set.data.view(60000, -1)
         targets = train_set.targets
-        semi_seed = 41
+        #TODO fix the semi_seed
+        semi_seed = 13
         # seperate the supervised and unsupervised dataset
         supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
                                                                           jparams['fcLayers'][-1], jparams['n_class'],
@@ -255,7 +256,7 @@ if __name__ == '__main__':
         net = torch.jit.script(MlpEP(jparams))
 
     # we define the optimizer
-    optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
+    net_params, optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
 
     # we load the pre-trained network
     if jparams['analysis_preTrain']:
@@ -481,7 +482,7 @@ if __name__ == '__main__':
         supervised_test_error_list = []
         entire_test_error_list = []
         # define unsupervised optimizer
-        unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
+        unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
         for epoch in tqdm(range(jparams['epochs'])):
             # supervised reminder

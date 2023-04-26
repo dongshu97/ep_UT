@@ -10,7 +10,6 @@ from main import rho, rhop
 from typing import List, Optional, Tuple
 
 
-
 '''
 Try to use the same function name for the MLP class and Conv class
 but the problem is that, there are different variables for Conv class than the MLP class,
@@ -33,14 +32,13 @@ def defineOptimizer(net, convNet, lr, type):
             net_params += [{'params': [net.W[i]], 'lr': lr[i]}]
             net_params += [{'params': [net.bias[i]], 'lr': lr[i]}]
     if type == 'SGD':
-        optimizer = torch.optim.SGD(net_params)
-        # optimizer = torch.optim.SGD(net_params, momentum=0.9)
+        optimizer = torch.optim.SGD(net_params, momentum=0.5)
     elif type == 'Adam':
         optimizer = torch.optim.Adam(net_params)
     else:
         raise ValueError("{} type of Optimizer is not defined ".format(type))
 
-    return optimizer
+    return net_params, optimizer
 
 class forwardNN(nn.Module):
     def __init__(self, fcLayers, ep_W):
@@ -69,7 +67,6 @@ class MlpEP(jit.ScriptModule):
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
         self.coeffDecay = jparams['coeffDecay']
-        self.epochDecay = jparams['epochDecay']
         self.batchSize = jparams['batchSize']
         self.fcLayers = jparams['fcLayers']
         self.errorEstimate = jparams['errorEstimate']
@@ -86,18 +83,18 @@ class MlpEP(jit.ScriptModule):
             self.cuda = False
 
         self.device = device
-        # The following parameters are for Adam optimizer
-        self.beta1 = 0.9
-        self.beta2 = 0.999
-        self.m_dw, self.v_dw = [], []
-        self.m_db, self.v_db = [], []
-        with torch.no_grad():
-            for i in range(len(jparams['fcLayers'])-1):
-                self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-                self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-                self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-                self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-        self.epsillon = 1e-8
+        # # The following parameters are for Adam optimizer
+        # self.beta1 = 0.9
+        # self.beta2 = 0.999
+        # self.m_dw, self.v_dw = [], []
+        # self.m_db, self.v_db = [], []
+        # with torch.no_grad():
+        #     for i in range(len(jparams['fcLayers'])-1):
+        #         self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+        #         self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+        #         self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+        #         self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+        # self.epsillon = 1e-8
 
         # We define the parameters to be trained
 
@@ -293,8 +290,8 @@ class MlpEP(jit.ScriptModule):
 
         return s
 
-    @jit.script_method
-    def computeGradientsEP(self, s:List[torch.Tensor], seq:List[torch.Tensor]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    #@jit.script_method
+    def computeGradientsEP(self, s:List[torch.Tensor], seq:List[torch.Tensor]):
         '''
         Compute EQ gradient to update the synaptic weight -
         for classic EP! for continuous time dynamics and prototypical
@@ -319,7 +316,7 @@ class MlpEP(jit.ScriptModule):
             self.bias[i].grad = -gradBias[i]
 
 
-    @jit.script_method
+    #@jit.script_method
     def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
                                   ybeta:Optional[torch.Tensor]=None):
         # define the coefficient for the hidden neurons

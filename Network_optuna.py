@@ -10,7 +10,6 @@ from optuna_optim import rho, rhop
 from typing import List, Optional, Tuple
 
 
-
 '''
 Try to use the same function name for the MLP class and Conv class
 but the problem is that, there are different variables for Conv class than the MLP class,
@@ -18,14 +17,28 @@ so whether we will merge s and h together?
 '''
 
 
-# class forwardNN(nn.Module):
-#   def __init__(self, fcLayers, ep_W):
-#     super(forwardNN, self).__init__()
-#     self.fcLayers = fcLayers
-#     self.W = nn.ModuleList(None)
-#     for i in range(len(jparams['fcLayers']) - 1):
-#       self.W.extend([nn.Linear(jparams['fcLayers'][i+1], jparams['fcLayers'][i], bias=False)])
-#       self.W[i].weights.data = ep_W[i]
+def defineOptimizer(net, convNet, lr, type):
+
+    net_params = []
+    if convNet:
+        for i in range(len(net.W)):
+            net_params += [{'params': net.W[i].weight, 'lr':lr[i]}]
+            net_params += [{'params': net.W[i].bias, 'lr':lr[i]}]
+        for i in range(len(net.Conv)):
+            net_params += [{'params': net.Conv[i].weight, 'lr': lr[i+len(net.W)]}]
+            net_params += [{'params': net.Conv[i].bias, 'lr': lr[i+len(net.W)]}]
+    else:
+        for i in range(len(net.W)):
+            net_params += [{'params': [net.W[i]], 'lr': lr[i]}]
+            net_params += [{'params': [net.bias[i]], 'lr': lr[i]}]
+    if type == 'SGD':
+        optimizer = torch.optim.SGD(net_params, momentum=0.9)
+    elif type == 'Adam':
+        optimizer = torch.optim.Adam(net_params)
+    else:
+        raise ValueError("{} type of Optimizer is not defined ".format(type))
+
+    return optimizer
 
 class forwardNN(nn.Module):
     def __init__(self, fcLayers, ep_W):
@@ -54,7 +67,6 @@ class MlpEP(jit.ScriptModule):
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
         self.coeffDecay = jparams['coeffDecay']
-        self.epochDecay = jparams['epochDecay']
         self.batchSize = jparams['batchSize']
         self.fcLayers = jparams['fcLayers']
         self.errorEstimate = jparams['errorEstimate']
@@ -71,39 +83,38 @@ class MlpEP(jit.ScriptModule):
             self.cuda = False
 
         self.device = device
-        # The following parameters are for
-        self.beta1 = 0.9
-        self.beta2 = 0.999
-        self.m_dw, self.v_dw = [], []
-        self.m_db, self.v_db = [], []
-        with torch.no_grad():
-            for i in range(len(jparams['fcLayers'])-1):
-                self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-                self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-                self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-                self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-        self.epsillon = 1e-8
+        # # The following parameters are for Adam optimizer
+        # self.beta1 = 0.9
+        # self.beta2 = 0.999
+        # self.m_dw, self.v_dw = [], []
+        # self.m_db, self.v_db = [], []
+        # with torch.no_grad():
+        #     for i in range(len(jparams['fcLayers'])-1):
+        #         self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+        #         self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
+        #         self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+        #         self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
+        # self.epsillon = 1e-8
 
-        # We define the list to save the weights
+        # We define the parameters to be trained
+
         W:List[torch.Tensor] = []
-        with torch.no_grad():
-            for i in range(len(jparams['fcLayers'])-1):
-                w = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device)
-                bound = 1 / np.sqrt(jparams['fcLayers'][i+1])
-                nn.init.xavier_uniform_(w, gain=0.5)
-                #nn.init.uniform_(w, a=-bound, b=bound)
-                W.append(w)
+        for i in range(len(jparams['fcLayers'])-1):
+            w:torch.Tensor = torch.empty(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device, requires_grad=True)
+            bound = 1 / np.sqrt(jparams['fcLayers'][i+1])
+            nn.init.xavier_uniform_(w, gain=0.5)
+            #nn.init.uniform_(w, a=-bound, b=bound)
+            W.append(w)
         self.W = W
 
         # We define the list to save the bias
         bias:List[torch.Tensor] = []
-        with torch.no_grad():
-            for i in range(len(jparams['fcLayers'])-1):
-                b = torch.empty(jparams['fcLayers'][i], device=device)
-                # bound = 1 / np.sqrt(jparams['fcLayers'][i])
-                #nn.init.uniform_(b, a=-bound, b=bound)
-                nn.init.zeros_(b)
-                bias.append(b)
+        for i in range(len(jparams['fcLayers'])-1):
+            b:torch.Tensor = torch.empty(jparams['fcLayers'][i], device=device, requires_grad=True)
+            # bound = 1 / np.sqrt(jparams['fcLayers'][i])
+            #nn.init.uniform_(b, a=-bound, b=bound)
+            nn.init.zeros_(b)
+            bias.append(b)
         self.bias = bias
 
         # create the mask for Pruning
@@ -279,8 +290,8 @@ class MlpEP(jit.ScriptModule):
 
         return s
 
-    @jit.script_method
-    def computeGradientsEP(self, s:List[torch.Tensor], seq:List[torch.Tensor]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    #@jit.script_method
+    def computeGradientsEP(self, s:List[torch.Tensor], seq:List[torch.Tensor]):
         '''
         Compute EQ gradient to update the synaptic weight -
         for classic EP! for continuous time dynamics and prototypical
@@ -292,21 +303,21 @@ class MlpEP(jit.ScriptModule):
         if self.errorEstimate == 'symmetric':
             coef = coef*0.5
 
-        gradW, gradBias = [], []
+        gradW: List[torch.Tensor] = []
+        gradBias: List[torch.Tensor] = []
 
         with torch.no_grad():
             for layer in range(len(s)-1):
                 gradW.append(coef*(torch.mm(torch.transpose(rho(s[layer+1]), 0, 1), rho(s[layer]))
                                    -torch.mm(torch.transpose(rho(seq[layer+1]), 0, 1), rho(seq[layer]))))
                 gradBias.append(coef*(rho(s[layer])-rho(seq[layer])).sum(0))
-            # for layer in range(len(s)-1):
-            #     gradW.append(coef*(torch.mm(torch.transpose(rho(s[layer+1]), 0, 1), rho(s[layer]))
-            #                        -torch.mm(torch.transpose(rho(seq[layer+1]), 0, 1), rho(seq[layer]))) -
-            #                  alpha*self.W[layer])
-            #     gradBias.append(coef*(rho(s[layer])-rho(seq[layer])).sum(0)-alpha*self.bias[layer])
-        return gradW, gradBias
 
-    @jit.script_method
+        for i in range(len(self.W)):
+            self.W[i].grad = -gradW[i]
+            self.bias[i].grad = -gradBias[i]
+
+
+    #@jit.script_method
     def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
                                   ybeta:Optional[torch.Tensor]=None):
         # define the coefficient for the hidden neurons
@@ -315,167 +326,166 @@ class MlpEP(jit.ScriptModule):
         if self.errorEstimate == 'symmetric':
             coef = coef * 0.5
         gradW, gradBias = [], []
-
+        # TODO update the gradients in self.W[i].grad
         with torch.no_grad():
             if ybeta is None:
-                gradW.append(-(1/batch_size)*torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)))
-                gradBias.append(-(1/batch_size)*(y-target).sum(0))
+                gradW.append(-(1 / batch_size) * torch.mm(torch.transpose(rho(h[0]), 0, 1), (y - target)))
+                gradBias.append(-(1 / batch_size) * (y - target).sum(0))
             else:
-                gradW.append(-(0.5/batch_size)*(1/batch_size)*(torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)) +
-                                          torch.mm(torch.transpose(rho(heq[0]), 0, 1), (ybeta-target))))
-                gradBias.append(-(0.5/batch_size)*(y+ybeta-2*target).sum(0))
-            for layer in range(len(h)-1):
+                gradW.append(
+                    -(0.5 / batch_size) * (1 / batch_size) * (torch.mm(torch.transpose(rho(h[0]), 0, 1), (y - target)) +
+                                                              torch.mm(torch.transpose(rho(heq[0]), 0, 1),
+                                                                       (ybeta - target))))
+                gradBias.append(-(0.5 / batch_size) * (y + ybeta - 2 * target).sum(0))
+            for layer in range(len(h) - 1):
                 gradW.append(coef * (torch.mm(torch.transpose(rho(h[layer + 1]), 0, 1), rho(h[layer]))
                                      - torch.mm(torch.transpose(rho(heq[layer + 1]), 0, 1), rho(heq[layer]))))
                 gradBias.append(coef * (rho(h[layer]) - rho(heq[layer])).sum(0))
-        return gradW, gradBias
+        for i in range(len(self.W)):
+            self.W[i].grad = -gradW[i]
+            self.bias[i].grad = -gradBias[i]
 
-    @jit.script_method
-    def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                             lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
-
-        '''update the weights and biases of network with a softmax output'''
-
-        gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
-        with torch.no_grad():
-            # update the hidden layers
-            for layer in range(len(self.W)):
-                lrDecay = lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
-                self.W[layer] += lrDecay * gradW[layer]
-                self.bias[layer] += lrDecay * gradBias[layer]
-            if self.Prune is True:
-                for layer in range(len(self.W)):
-                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-
-    @jit.script_method
-    def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-                                  lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
-        gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
-
-        m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
-        # update weights and bias
-        with torch.no_grad():
-            # lrDecay = 0.01*np.power(0.97, epoch)
-            # lrDecay = 0.01*np.power(0.5, int(epoch/10))
-
-            for layer in range(len(self.W)):
-                # calculate the iteration momentum and velocity
-                m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
-                m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
-                # self.m_dw[layer] = self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer]  # momentum for weights
-                # self.m_db[layer] = self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer]  # momentum for bias
-
-                v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer] ** 2))
-                v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer] ** 2))
-
-                # self.v_dw[layer] = self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2)  # velocity for weights
-                # self.v_db[layer] = self.beta2 * self.v_db[layer] + (1 - self.beta2) * gradBias[layer]  # velocity for bias
-
-                # bias correction
-                m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
-                m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
-                v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
-                v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
-
-                # update the weight
-                # TODO solve the problem of torch.pow or np.power
-                lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
-                                                     torch.tensor(int(epoch / self.epochDecay)))
-                # print('the decayed lr is:', lrDecay)
-                # print('alpha is:', alpha[layer])
-                self.W[layer] += lrDecay * (m_dw_corr / (torch.sqrt(v_dw_corr) + self.epsillon))
-                self.bias[layer] += lrDecay * (m_db_corr / (torch.sqrt(v_db_corr) + self.epsillon))
-            if self.Prune is True:
-                for layer in range(len(self.W)):
-                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-
-        self.m_dw = m_dw_new
-        self.m_db = m_db_new
-        self.v_dw = v_dw_new
-        self.v_db = v_db_new
-
-    @jit.script_method
-    def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
-        '''
-        Update weights and bias according to EQ algo
-        '''
-
-        gradW, gradBias = self.computeGradientsEP(s, seq)
-
-        with torch.no_grad():
-            #lrDecay = 0.01*np.power(0.97, epoch)
-            #lrDecay = 0.01*np.power(0.5, int(epoch/10))
-            if self.randomHidden:
-                lrDecay = lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-                self.W[0] += lrDecay*gradW[0]
-                self.bias[0] += lrDecay*gradBias[0]
-            else:
-                for layer in range(len(self.W)):
-                    #lrDecay = self.lr[layer]
-                    # TODO solve the problem of torch.pow or np.power
-                    lrDecay = lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-                    #print('the decayed lr is:', lrDecay)
-                    # print('alpha is:', alpha[layer])
-
-                    self.W[layer] += lrDecay*gradW[layer]
-                    self.bias[layer] += lrDecay*gradBias[layer]
-
-            if self.Prune is True:
-                for layer in range(len(self.W)):
-                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-
-    @jit.script_method
-    def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
-        '''
-        Update weights using the Adam optimizer
-        '''
-        #
-        # m_dw_before: List[torch.Tensor], m_db_before: List[torch.Tensor],
-        # v_dw_before: List[torch.Tensor], v_db_before: List[torch.Tensor],
-        # calculate the gradients
-        gradW, gradBias = self.computeGradientsEP(s, seq)
-
-        m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
-        # update weights and bias
-        with torch.no_grad():
-            # lrDecay = 0.01*np.power(0.97, epoch)
-            # lrDecay = 0.01*np.power(0.5, int(epoch/10))
-
-            for layer in range(len(self.W)):
-                # calculate the iteration momentum and velocity
-                m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
-                m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
-                #self.m_dw[layer] = self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer]  # momentum for weights
-                #self.m_db[layer] = self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer]  # momentum for bias
-
-                v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2))
-                v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer]**2))
-
-                #self.v_dw[layer] = self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2)  # velocity for weights
-                #self.v_db[layer] = self.beta2 * self.v_db[layer] + (1 - self.beta2) * gradBias[layer]  # velocity for bias
-
-                # bias correction
-                m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
-                m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
-                v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
-                v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
-
-                # update the weight
-                # TODO solve the problem of torch.pow or np.power
-                lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay), torch.tensor(int(epoch / self.epochDecay)))
-                # print('the decayed lr is:', lrDecay)
-                # print('alpha is:', alpha[layer])
-                self.W[layer] += lrDecay*(m_dw_corr/(torch.sqrt(v_dw_corr) + self.epsillon))
-                self.bias[layer] += lrDecay*(m_db_corr/(torch.sqrt(v_db_corr) + self.epsillon))
-
-            if self.Prune is True:
-                for layer in range(len(self.W)):
-                    self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-
-        self.m_dw = m_dw_new
-        self.m_db = m_db_new
-        self.v_dw = v_dw_new
-        self.v_db = v_db_new
+    # #@jit.script_method
+    # def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
+    #                          lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
+    #
+    #     '''update the weights and biases of network with a softmax output'''
+    #
+    #     gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
+    #     with torch.no_grad():
+    #         # update the hidden layers
+    #         for layer in range(len(self.W)):
+    #             lrDecay = lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
+    #
+    #             self.W[layer] += lrDecay*gradW[layer]
+    #             self.bias[layer] += lrDecay*gradBias[layer]
+    #         if self.Prune is True:
+    #             for layer in range(len(self.W)):
+    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+    #
+    # #@jit.script_method
+    # def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
+    #                               lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
+    #     gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
+    #
+    #     m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
+    #     # update weights and bias
+    #     with torch.no_grad():
+    #         # lrDecay = 0.01*np.power(0.97, epoch)
+    #         # lrDecay = 0.01*np.power(0.5, int(epoch/10))
+    #
+    #         for layer in range(len(self.W)):
+    #             # calculate the iteration momentum and velocity
+    #             m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
+    #             m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
+    #
+    #             v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer] ** 2))
+    #             v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer] ** 2))
+    #
+    #             # bias correction
+    #             m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
+    #             m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
+    #             v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
+    #             v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
+    #
+    #             # update the weight
+    #             # TODO solve the problem of torch.pow or np.power
+    #             lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
+    #                                                  torch.tensor(int(epoch / self.epochDecay)))
+    #
+    #             self.W[layer] += lrDecay * (m_dw_corr / (torch.sqrt(v_dw_corr) + self.epsillon))
+    #             self.bias[layer] += lrDecay * (m_db_corr / (torch.sqrt(v_db_corr) + self.epsillon))
+    #         if self.Prune is True:
+    #             for layer in range(len(self.W)):
+    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+    #
+    #     self.m_dw = m_dw_new
+    #     self.m_db = m_db_new
+    #     self.v_dw = v_dw_new
+    #     self.v_db = v_db_new
+    #
+    # @jit.script_method
+    # def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
+    #     '''
+    #     Update weights and bias according to EQ algo
+    #     '''
+    #
+    #     gradW, gradBias = self.computeGradientsEP(s, seq)
+    #
+    #     with torch.no_grad():
+    #         #lrDecay = 0.01*np.power(0.97, epoch)
+    #         #lrDecay = 0.01*np.power(0.5, int(epoch/10))
+    #         if self.randomHidden:
+    #             lrDecay = lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+    #             self.W[0] += lrDecay*gradW[0]
+    #             self.bias[0] += lrDecay*gradBias[0]
+    #         else:
+    #             for layer in range(len(self.W)):
+    #                 #lrDecay = self.lr[layer]
+    #                 # TODO solve the problem of torch.pow or np.power
+    #                 lrDecay = lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
+    #                 #print('the decayed lr is:', lrDecay)
+    #                 # print('alpha is:', alpha[layer])
+    #
+    #                 self.W[layer] += lrDecay*gradW[layer]
+    #                 self.bias[layer] += lrDecay*gradBias[layer]
+    #
+    #         if self.Prune is True:
+    #             for layer in range(len(self.W)):
+    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+    #
+    # @jit.script_method
+    # def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
+    #     '''
+    #     Update weights using the Adam optimizer
+    #     '''
+    #     #
+    #     # m_dw_before: List[torch.Tensor], m_db_before: List[torch.Tensor],
+    #     # v_dw_before: List[torch.Tensor], v_db_before: List[torch.Tensor],
+    #     # calculate the gradients
+    #     gradW, gradBias = self.computeGradientsEP(s, seq)
+    #
+    #     m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
+    #     # update weights and bias
+    #     with torch.no_grad():
+    #         # lrDecay = 0.01*np.power(0.97, epoch)
+    #         # lrDecay = 0.01*np.power(0.5, int(epoch/10))
+    #
+    #         for layer in range(len(self.W)):
+    #             # calculate the iteration momentum and velocity
+    #             m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
+    #             m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
+    #             #self.m_dw[layer] = self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer]  # momentum for weights
+    #             #self.m_db[layer] = self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer]  # momentum for bias
+    #
+    #             v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2))
+    #             v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer]**2))
+    #
+    #             #self.v_dw[layer] = self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2)  # velocity for weights
+    #             #self.v_db[layer] = self.beta2 * self.v_db[layer] + (1 - self.beta2) * gradBias[layer]  # velocity for bias
+    #
+    #             # bias correction
+    #             m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
+    #             m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
+    #             v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
+    #             v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
+    #
+    #             # update the weight
+    #             # TODO solve the problem of torch.pow or np.power
+    #             lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay), torch.tensor(int(epoch / self.epochDecay)))
+    #             # print('the decayed lr is:', lrDecay)
+    #             # print('alpha is:', alpha[layer])
+    #             self.W[layer] += lrDecay*(m_dw_corr/(torch.sqrt(v_dw_corr) + self.epsillon))
+    #             self.bias[layer] += lrDecay*(m_db_corr/(torch.sqrt(v_db_corr) + self.epsillon))
+    #
+    #         if self.Prune is True:
+    #             for layer in range(len(self.W)):
+    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
+    #
+    #     self.m_dw = m_dw_new
+    #     self.m_db = m_db_new
+    #     self.v_dw = v_dw_new
+    #     self.v_db = v_db_new
 
     @jit.script_method
     def weightNormalization(self):
@@ -487,7 +497,7 @@ class MlpEP(jit.ScriptModule):
         # scale = 1./torch.sqrt(torch.tensor(self.fcLayers[1]))
         # we normalize the weight by the average norm
         self.W[0] = (self.W[0]/norm)*scale
-
+    #
     # @jit.script_method
     # def inferenceWeight(self, dropProb:List[float]):
     #     for i in range(len(dropProb)-1):
@@ -610,29 +620,14 @@ class Classlayer(nn.Module):
         return x
 
     # class Dropout(nn.Module):
-#     def __init__(self, p: float = 0.5):
-#         super(Dropout, self).__init__()
-#         if p < 0 or p > 1:
-#             raise ValueError("dropout probability has to be between 0 and 1, " "but got {}".format(p))
-#         self.p = p
-#
-#     def forward(self, s:List[torch.Tensor])->List[torch.Tensor]:
-#         # return a binary vector for the training process
-#         #binomial = torch.distributions.binomial.Binomial(probs=1 - self.p)
-#         p_distribut = []
-#         binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1-self.p))
-#         #     #bernoulli = torch.distributions.bernoulli.Bernoulli(prob=1-p)
-#         for layer in range(len(s)-1):
-#             p_distribut.append(binomial.sample(s[layer].size()) * (1.0 / (1 - self.p)))
-#
-#         p_distribut.append(binomial.sample(s[layer].size()) * (1.0 / (1 - self.p)))
-#
-#         return p_distribut
+
+
 
 class ConvEP(nn.Module):
     '''
     Define the network studied
     '''
+    # Try to use the jit version
 
     def __init__(self, jparams):
 
@@ -678,12 +673,11 @@ class ConvEP(nn.Module):
         size_convpool_list = [input_size]
 
         # define the convolutional layer
-        with torch.no_grad():
-            for i in range(self.conv_number):
-                Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=pad, bias=True)])
-                #  in default, we use introduce the bias
-                size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*pad)  # calculate the output size
-                size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*pad - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
+        for i in range(self.conv_number):
+            Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=pad, bias=True)])
+            #  in default, we use introduce the bias
+            size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*pad)  # calculate the output size
+            size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*pad - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
 
         self.Conv = Conv
 
@@ -699,11 +693,9 @@ class ConvEP(nn.Module):
         self.fcLayers = fcLayers
         self.fc_number = len(self.fcLayers) - 1
         self.W = nn.ModuleList(None)
-        with torch.no_grad():
-            for i in range(self.fc_number):
-                self.W.extend([nn.Linear(fcLayers[i + 1], fcLayers[i], bias=True)])
-                # torch.nn.init.zeros_(self.W[i].bias)
-
+        for i in range(self.fc_number):
+            self.W.extend([nn.Linear(fcLayers[i + 1], fcLayers[i], bias=True)])
+            # torch.nn.init.zeros_(self.W[i].bias)
 
         # if conv_number > 0:
         #     with torch.no_grad():
@@ -764,7 +756,7 @@ class ConvEP(nn.Module):
         # Convolutional part
         # last conv layer
         s_pool, ind = self.pool(self.Conv[0](s[self.fc_number+1]))
-        P_ind[0] = ind # len(P_ind) = conv_number
+        P_ind[0] = ind  # len(P_ind) = conv_number
         dsdt.append(-s[self.fc_number] + rho(s_pool + torch.mm(s[self.fc_number-1], self.W[-1].weight).view(s[self.fc_number].size()))) # unflatten the result
         del s_pool, ind
 
@@ -799,41 +791,6 @@ class ConvEP(nn.Module):
         else:
             del dsdt
             return s, P_ind
-
-        # snew = []
-        # snew.append(rho(self.W[0](s[1])))
-        #
-        # if beta != 0:
-        #     snew[0] = snew[0] + beta*(target-s[0])  # prototypical model (without the damping of s)
-        #
-        # if len(s) > 2:
-        #     for fc in range(1, len(s)-2):
-        #         snew.append(rho(self.W[fc](s[fc+1]) + torch.mm(s[fc-1], self.W[fc-1].weight)))
-        #
-        # snew.append(rho(self.W[-1](h[0].flatten(1,-1)) + torch.mm(s[-2], self.W[-2].weight)))
-        #
-        # hnew = []
-        #
-        # h0, ind = self.Pool(self.Conv[0](h[1]))
-        # P_ind[0] = ind
-        # hnew.append(rho(h0 + (torch.mm(s[-1], self.W[-1].weight)).unflatten(1, h[0].size()[1:])))
-        # del ind, h0
-        #
-        # # save the input images at h[-1], so we do not update h[-1]
-        # if len(h) > 2:
-        #     for cv in range(1, len(s)-2):
-        #         hcv, ind = self.Pool(self.Conv[cv](h[cv+1]))
-        #         P_ind[cv] = ind
-        #         # update the unConv weight data
-        #         self.unConv[cv-1].weight.data = (self.Conv[cv-1].weight.flip([2, 3])).transpose(0, 1)
-        #
-        #         hnew.append(hcv + self.unConv[cv-1](self.unPool(h[cv-1], P_ind[cv-1])))
-        #         del hcv, ind
-        #
-        # # update
-        # s, h = snew, hnew
-
-        # return s, h, P_ind
 
     def forward(self, s, data, P_ind, beta=0, target=None, tracking=False):
         # TODO why rename the self.variable at the beginning?
@@ -894,12 +851,6 @@ class ConvEP(nn.Module):
 
             gradBias_fc.append(coef * (s[self.fc_number-1] - seq[self.fc_number-1]).sum(0))
 
-            # if len(s) > 2:
-            #     for fc in range(len(s)-2):
-            #         gradW_fc.append(coef*(torch.mm(torch.transpose(s[fc], 0, 1), s[fc+1]) -
-            #                              torch.mm(torch.transpose(seq[fc], 0, 1), seq[fc+1])))
-            #         gradBias_fc.append(coef*(s[fc]-seq[fc]).sum(0))
-
             # convolutional layers
             for i in range(self.conv_number-1):
                 output_size = [s[self.fc_number+i].size(0), s[self.fc_number+i].size(1), self.size_conv_list[i], self.size_conv_list[i]]
@@ -911,39 +862,41 @@ class ConvEP(nn.Module):
                 gradBias_conv.append(coef*(self.unpool(s[self.fc_number+i], P_ind[i], output_size=output_size) -
                                            self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[self.fc_number+i].size(1), -1).sum(1))
 
-                # gradconv_bias.append((1 / (beta * batch_size)) * (
-                #         self.unpool(s[self.nc + i], inds[self.nc + i], output_size=output_size) - self.unpool(
-                #     seq[self.nc + i], indseq[self.nc + i], output_size=output_size)).permute(1, 0, 2,
-                #                                                                              3).contiguous().view(
-                #     s[self.nc + i].size(1), -1).sum(1))
             # last layer
             output_size = [s[-1].size(0), s[-1].size(1), self.size_conv_list[-2], self.size_conv_list[-2]]
             gradW_conv.append(coef*(F.conv2d(data.permute(1,0,2,3), self.unpool(s[-1], P_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)-
                                     F.conv2d(data.permute(1,0,2,3), self.unpool(seq[-1], Peq_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1,0,2,3))
             gradBias_conv.append(coef*(self.unpool(s[-1], P_ind[-1], output_size=output_size)-self.unpool(seq[-1], Peq_ind[-1], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[-1].size(1),-1).sum(1))
 
-        return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
+        for (i, param) in enumerate(self.W):
+            param.weight.grad = -gradW_fc[i]
+            param.bias.grad = -gradBias_fc[i]
+        for (i, param) in enumerate(self.Conv):
+            param.weight.grad = -gradW_conv[i]
+            param.bias.grad = -gradBias_conv[i]
 
-    def updateConvWeight(self, data, s, seq, P_ind, Peq_ind, lr):
+        # return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
 
-        gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
-
-        # for i in range(len(self.fc)):
-        #     self.fc[i].weight += lr_tab[i] * gradfc[i]
-        #     self.fc[i].bias += lr_tab[i] * gradfc_bias[i]
-        # for i in range(len(self.conv)):
-        #     self.conv[i].weight += lr_tab[i + len(self.fc)] * gradconv[i]
-        #     self.conv[i].bias += lr_tab[i + len(self.fc)] * gradconv_bias[i]
-
-        # TODO consider change the lr sign for the random beta sign
-        with torch.no_grad():
-            for (i, param) in enumerate(self.W):
-                param.weight.data += lr[i] * gradW_fc[i]
-                param.bias.data += lr[i] * gradBias_fc[i]
-
-            for (i, param) in enumerate(self.Conv):
-                param.weight.data += lr[i+self.fc_number] * gradW_conv[i]
-                param.bias.data += lr[i+self.fc_number] * gradBias_conv[i]
+    # def updateConvWeight(self, data, s, seq, P_ind, Peq_ind, lr):
+    #
+    #     gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
+    #
+    #     # for i in range(len(self.fc)):
+    #     #     self.fc[i].weight += lr_tab[i] * gradfc[i]
+    #     #     self.fc[i].bias += lr_tab[i] * gradfc_bias[i]
+    #     # for i in range(len(self.conv)):
+    #     #     self.conv[i].weight += lr_tab[i + len(self.fc)] * gradconv[i]
+    #     #     self.conv[i].bias += lr_tab[i + len(self.fc)] * gradconv_bias[i]
+    #
+    #     # TODO consider change the lr sign for the random beta sign
+    #     with torch.no_grad():
+    #         for (i, param) in enumerate(self.W):
+    #             param.weight.data += lr[i] * gradW_fc[i]
+    #             param.bias.data += lr[i] * gradBias_fc[i]
+    #
+    #         for (i, param) in enumerate(self.Conv):
+    #             param.weight.data += lr[i+self.fc_number] * gradW_conv[i]
+    #             param.bias.data += lr[i+self.fc_number] * gradBias_conv[i]
 
     # def initState(self, args, data):
     #     '''

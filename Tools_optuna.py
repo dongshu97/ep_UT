@@ -229,14 +229,23 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
     return test_error, loss_test
 
 
-def train_supervised_crossEntropy(net, jparams, train_loader, lr, epoch):
+def train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
     net.train()
     net.epoch = epoch + 1
     total_train = torch.zeros(1, device=net.device).squeeze()
     correct_train = torch.zeros(1, device=net.device).squeeze()
 
-    for batch_idx, (data, targets) in enumerate(train_loader):
+    # parameters = []
+    # for i in range(len(jparams['fcLayers'])-1):
+    #     parameters += [{'params':[net.W[i]], 'lr':lr[i]}]
+    #     parameters += [{'params':[net.bias[i]], 'lr':lr[i]}]
+    #
+    # optimizer = torch.optim.SGD(parameters, momentum=0.998)
+    # #optimizer = torch.optim.Adam(parameters)
 
+    for batch_idx, (data, targets) in enumerate(train_loader):
+        # TODO grads=0
+        optimizer.zero_grad()
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
@@ -266,11 +275,15 @@ def train_supervised_crossEntropy(net, jparams, train_loader, lr, epoch):
             # nudging phase
             if len(h) > 1:
                 h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
-            # update the weights
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight_softmax(h, heq, y, targets, lr, epoch=net.epoch)
-            else:
-                net.updateWeight_softmax(h, heq, y, targets, lr)
+            # TODO calculate the gradients
+            net.computeGradientEP_softmax(h, heq, y, targets)
+
+            optimizer.step()
+            # # update the weights
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight_softmax(h, heq, y, targets, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight_softmax(h, heq, y, targets, lr)
 
         elif jparams['errorEstimate'] == 'symmetric':
             if len(h) <= 1:
@@ -289,10 +302,12 @@ def train_supervised_crossEntropy(net, jparams, train_loader, lr, epoch):
             hmoins = h.copy()
             ymoins = y.clone()
         # update and track the weights of the network
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins, epoch=net.epoch)
-            else:
-                net.updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins)
+            net.computeGradientEP_softmax(hplus, hmoins, yplus, targets, ybeta=ymoins)
+            optimizer.step()
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins, epoch=net.epoch)
+            # else:
+            #     net.updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins)
 
         # calculate the training error
         prediction = torch.argmax(yeq.detach(), dim=1)
@@ -304,18 +319,17 @@ def train_supervised_crossEntropy(net, jparams, train_loader, lr, epoch):
     return train_error
 
 
-def train_supervised_ep(net, jparams, train_loader, lr, epoch):
+def train_supervised_ep(net, jparams, train_loader, optimizer, epoch):
     net.train()
     net.epoch = epoch + 1
 
     total_train = torch.zeros(1, device=net.device).squeeze()
     correct_train = torch.zeros(1, device=net.device).squeeze()
 
-    # if net.epoch % args.epochDecay == 0:
-    #     net.gamma = net.gamma*args.gammaDecay
     if jparams['convNet']:
         # TODO add the dropout in the ConvNet (there is no dropout in the ConvNet yet)
         for batch_idx, (data, targets) in enumerate(train_loader):
+            optimizer.zero_grad()
             # random signed beta: better approximate the gradient
             net.beta = torch.sign(torch.randn(1)) * jparams['beta']
             batchSize = data.size(0)
@@ -338,7 +352,9 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
                 s, P_ind = net.forward(s, data, P_ind, beta=net.beta, target=targets)
 
                 # update weights
-                net.updateConvWeight(data, s, seq, P_ind, Peq_ind, lr)
+                net.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
+                optimizer.step()
+                # net.updateConvWeight(data, s, seq, P_ind, Peq_ind, lr)
 
             elif jparams['errorEstimate'] == 'symmetric':
                 # free phase
@@ -360,11 +376,13 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
                 Pmoins_ind = P_ind.copy()
 
                 # update the weights
-                net.updateConvWeight(data, splus, smoins, Pplus_ind, Pmoins_ind, lr)
+                net.computeConvGradientEP(data, splus, smoins, Pplus_ind, Pmoins_ind)
+                optimizer.step()
+                # net.updateConvWeight(data, splus, smoins, Pplus_ind, Pmoins_ind, lr)
 
     else:
         for batch_idx, (data, targets) in enumerate(train_loader):
-
+            optimizer.zero_grad()
             # random signed beta: better approximate the gradient
             net.beta = torch.sign(torch.randn(1)) * jparams['beta']
             s = net.initState(data)
@@ -390,10 +408,12 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
                 seq = s.copy()
                 s = net.forward(s, p_distribut, target=targets, beta=net.beta)
 
-                if jparams['Optimizer'] == 'Adam':
-                    net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
-                else:
-                    net.updateWeight(s, seq, lr)
+                net.computeGradientsEP(s, seq)
+                optimizer.step()
+                # if jparams['Optimizer'] == 'Adam':
+                #     net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
+                # else:
+                #     net.updateWeight(s, seq, lr)
             elif jparams['errorEstimate'] == 'symmetric':
                 # free phase
                 s = net.forward(s, p_distribut)
@@ -405,11 +425,14 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
                 s = seq.copy()
                 s = net.forward(s, p_distribut, target=targets, beta=-net.beta)
                 smoins = s.copy()
-            # update and track the weights of the network
-                if jparams['Optimizer'] == 'Adam':
-                    net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
-                else:
-                    net.updateWeight(splus, smoins, lr)
+
+                net.computeGradientsEP(splus, smoins)
+                optimizer.step()
+            # # update and track the weights of the network
+            #     if jparams['Optimizer'] == 'Adam':
+            #         net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
+            #     else:
+            #         net.updateWeight(splus, smoins, lr)
 
     # calculate the training error
     prediction = torch.argmax(seq[0].detach(), dim=1)
@@ -423,7 +446,7 @@ def train_supervised_ep(net, jparams, train_loader, lr, epoch):
 
 # TODO the function of unsupervised_crossEntropy can be used in semi-supervised learning
 # TODO add the dropout
-def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
+def train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
     net.train()
     net.epoch = epoch + 1
 
@@ -441,7 +464,7 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
     target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
 
     for batch_idx, (data, targets) in enumerate(train_loader):
-
+        optimizer.zero_grad()
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
         # init the hidden layers
@@ -477,10 +500,12 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
                 h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
 
             # update the weights
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight_softmax(h, heq, y, unsupervised_targets, lr, epoch=net.epoch)
-            else:
-                net.updateWeight_softmax(h, heq, y, unsupervised_targets, lr)
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight_softmax(h, heq, y, unsupervised_targets, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight_softmax(h, heq, y, unsupervised_targets, lr)
+            net.computeGradientEP_softmax(h, heq, y, unsupervised_targets)
+            optimizer.step()
 
         elif jparams['errorEstimate'] == 'symmetric':
             if len(h) <= 1:
@@ -503,10 +528,12 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
             hmoins = h.copy()
             ymoins = y.clone()
         # update and track the weights of the network
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins, epoch=net.epoch)
-            else:
-                net.updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins)
+        #     if jparams['Optimizer'] == 'Adam':
+        #         net.Adam_updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins, epoch=net.epoch)
+        #     else:
+        #         net.updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins)
+            net.computeGradientEP_softmax(hplus, hmoins, yplus, unsupervised_targets, ybeta=ymoins)
+            optimizer.step()
         # calculate the Homeostasis
         # nudge_sign = torch.sign(unsupervised_targets-yeq)
         # A = torch.max(nudge_sign, torch.zeros(nudge_sign.size(), device=net.device))
@@ -525,7 +552,7 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, lr, epoch):
     return Xth
 
 
-def train_unsupervised_ep(net, jparams, train_loader, lr, epoch):
+def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
     '''
     Function to train the network for 1 epoch
     '''
@@ -543,6 +570,7 @@ def train_unsupervised_ep(net, jparams, train_loader, lr, epoch):
         net.gamma = net.gamma*jparams['gammaDecay']
 
     for batch_idx, (data, targets) in enumerate(train_loader):
+        optimizer.zero_grad()
         #random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
 
@@ -582,10 +610,12 @@ def train_unsupervised_ep(net, jparams, train_loader, lr, epoch):
             s = net.forward(s, p_distribut, target=unsupervised_targets, beta=net.beta)
 
             # update the weights
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
-            else:
-                net.updateWeight(s, seq, lr, epoch=net.epoch)
+            net.computeGradientsEP(s, seq)
+            optimizer.step()
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight(s, seq, lr, epoch=net.epoch)
 
         elif jparams['errorEstimate'] == 'symmetric':
 
@@ -607,10 +637,12 @@ def train_unsupervised_ep(net, jparams, train_loader, lr, epoch):
             smoins = s.copy()
 
             # update and track the weights of the network
-            if jparams['Optimizer'] == 'Adam':
-                net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
-            else:
-                net.updateWeight(splus, smoins, lr, epoch=net.epoch)
+            net.net.computeGradientsEP(splus, smoins)
+            optimizer.step()
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight(splus, smoins, lr, epoch=net.epoch)
 
         if jparams['Dropout']:
             target_activity =jparams['nudge_N'] / (jparams['fcLayers'][0] * (1 - jparams['dropProb'][0]))  # dropout influences the target activity
@@ -770,6 +802,7 @@ def test_supervised_ep(net, jparams, test_loader, record=None):
             # free phase
             h, y = net.forward_softmax(h)
             output = y.clone().detach()
+
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()
 

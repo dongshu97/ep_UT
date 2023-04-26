@@ -84,12 +84,11 @@ def returnMNIST(jparams):
     layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=1000, shuffle=True)
     #
     if jparams['littleData']:
-        flatten_dataset = train_set.data.view(60000, -1)
         targets = train_set.targets
         semi_seed = jparams['semi_seed']
-        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(flatten_dataset, targets,
+        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
                                                                           jparams['fcLayers'][0], jparams['n_class'],
-                                                                          jparams['trainLabel_number'],
+                                                                          jparams['trainLabel_number'],transform=torchvision.transforms.Compose(transforms),
                                                                           seed=semi_seed)
         supervised_loader = torch.utils.data.DataLoader(supervised_dataset, batch_size=jparams['pre_batchSize'],
                                                         shuffle=True)
@@ -130,7 +129,8 @@ def jparamsCreate(pre_config, trial):
         #jparams["class_seed"] = trial.suggest_int("class_seed", 0, 42)
         jparams["class_seed"] = 34
         if jparams["littleData"]:
-            jparams["semi_seed"] = trial.suggest_int("semi_seed", 0, 42)
+            # jparams["semi_seed"] = trial.suggest_int("semi_seed", 0, 42)
+            jparams["semi_seed"] = 13
             jparams["pre_batchSize"] = trial.suggest_int("pre_batchSize", 10, min(jparams["trainLabel_number"], 512))
 
     if jparams["action"] == 'unsupervised_ep':
@@ -213,17 +213,17 @@ def jparamsCreate(pre_config, trial):
         #     jparams["dropProb"] = dropProb.copy()
         #     jparams["dropProb"].reverse()
         #
-        if jparams["Dropout"]:
-            dropProb = []
-            dropProb.append(0.2)
-            for i in range(1, len(jparams["fcLayers"])):
-                if jparams["fcLayers"][i] == jparams["n_class"]:
-                    drop_i = 0
-                else:
-                    drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                dropProb.append(drop_i)
-        jparams["dropProb"] = dropProb.copy()
-        # jparams["dropProb"] = [0.2, 0.5, 0]
+        # if jparams["Dropout"]:
+        #     dropProb = []
+        #     dropProb.append(0.2)
+        #     for i in range(1, len(jparams["fcLayers"])):
+        #         if jparams["fcLayers"][i] == jparams["n_class"]:
+        #             drop_i = 0
+        #         else:
+        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
+        #         dropProb.append(drop_i)
+        # jparams["dropProb"] = dropProb.copy()
+        jparams["dropProb"] = [0.2, 0.5, 0]
         jparams["dropProb"].reverse()
 
         # if jparams["Prune"] == "Initiation":
@@ -287,7 +287,7 @@ def jparamsCreate(pre_config, trial):
     return jparams
 
 
-def train_validation(jparams, net, trial, validation_loader, train_loader=None, class_loader=None, layer_loader=None,
+def train_validation(jparams, net, trial, validation_loader, optimizer, train_loader=None, class_loader=None, layer_loader=None,
                      class_net=None, supervised_loader=None, unsupervised_loader=None):
     # train the model
     if jparams['action'] == 'supervised_ep':
@@ -298,9 +298,9 @@ def train_validation(jparams, net, trial, validation_loader, train_loader=None, 
 
         for epoch in tqdm(range(jparams['epochs'])):
             if jparams['lossFunction'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, train_loader, jparams["lr"], epoch)
+                train_error_epoch = train_supervised_ep(net, jparams, train_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, jparams["lr"], epoch)
+                train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
 
             validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
 
@@ -319,7 +319,7 @@ def train_validation(jparams, net, trial, validation_loader, train_loader=None, 
 
         for epoch in tqdm(range(jparams['epochs'])):
             # train process
-            Xth = train_unsupervised_ep(net, jparams, train_loader, jparams['lr'], epoch)
+            Xth = train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch)
             # class process
             response, max0_indice = classify(net, jparams, class_loader)
             # test process
@@ -339,9 +339,9 @@ def train_validation(jparams, net, trial, validation_loader, train_loader=None, 
             raise ValueError("supervised training data or unsupervised training data is not given ")
         for epoch in tqdm(range(jparams["pre_epochs"])):
             if jparams['lossFunction'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
 
             validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
             # Handle pruning based on the intermediate value.
@@ -349,18 +349,20 @@ def train_validation(jparams, net, trial, validation_loader, train_loader=None, 
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
+        unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
+
         for epoch in tqdm(range(jparams["epochs"])):
             # supervised reminder
             if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, jparams['pre_lr'], epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, jparams['pre_lr'],
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
                                                                      epoch)
             # unsupervised training
             if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, jparams['lr'], epoch)
+                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             entire_test_epoch = test_supervised_ep(net, jparams, validation_loader)
             # Handle pruning based on the intermediate value.
             trial.report(entire_test_epoch, epoch+jparams['pre_epochs'])
@@ -407,6 +409,14 @@ def objective(trial, pre_config):
 
     # create the model
     net = torch.jit.script(MlpEP(jparams))
+    # TODO to include the CNN version
+    if jparams['pre_epochs'] > 0:
+        initial_lr = jparams['pre_lr']
+    else:
+        initial_lr = jparams['lr']
+
+    # define the optimizer
+    optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
 
     # load the trained unsupervised network when we train classification layer
     if jparams["action"] == 'class_layer':
@@ -422,14 +432,14 @@ def objective(trial, pre_config):
         final_err = train_validation(jparams, net, trial, validation_loader, layer_loader=layer_loader, class_net=class_net)
 
     elif jparams["action"] == 'unsupervised_ep':
-        final_err = train_validation(jparams, net, trial, validation_loader, train_loader=train_loader, class_loader=class_loader)
+        final_err = train_validation(jparams, net, trial, validation_loader, optimizer, train_loader=train_loader, class_loader=class_loader)
     elif jparams["action"] == 'supervised_ep':
         if jparams['littleData']:
-            final_err = train_validation(jparams, net, trial, validation_loader, train_loader=supervised_loader)
+            final_err = train_validation(jparams, net, trial, validation_loader, optimizer, train_loader=supervised_loader)
         else:
-            final_err = train_validation(jparams, net, trial, validation_loader, train_loader=train_loader)
+            final_err = train_validation(jparams, net, trial, validation_loader, optimizer, train_loader=train_loader)
     elif jparams["action"] == 'semi-supervised_ep':
-        final_err = train_validation(jparams, net, trial, validation_loader, supervised_loader=supervised_loader, unsupervised_loader=unsupervised_loader)
+        final_err = train_validation(jparams, net, trial, validation_loader, optimizer, supervised_loader=supervised_loader, unsupervised_loader=unsupervised_loader)
 
     del(jparams)
     # record trials
