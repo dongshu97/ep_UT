@@ -455,9 +455,6 @@ def train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch
         Y_p = torch.zeros(jparams['fcLayers'][0], device=net.device)
 
     Xth = torch.zeros(jparams['fcLayers'][0], device=net.device)
-    # Decide the decreasing gamma
-    if net.epoch % jparams['epochDecay'] == 0:
-        net.gamma = net.gamma*jparams['gammaDecay']
 
     # decide the factor
     T_coef = 0.002
@@ -565,9 +562,6 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
         Y_p = torch.zeros(jparams['fcLayers'][0], device=net.device)
 
     Xth = torch.zeros(jparams['fcLayers'][0], device=net.device)
-    # Decide the decreasing gamma
-    if net.epoch % jparams['epochDecay'] == 0:
-        net.gamma = net.gamma*jparams['gammaDecay']
 
     for batch_idx, (data, targets) in enumerate(train_loader):
         optimizer.zero_grad()
@@ -637,7 +631,7 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
             smoins = s.copy()
 
             # update and track the weights of the network
-            net.net.computeGradientsEP(splus, smoins)
+            net.computeGradientsEP(splus, smoins)
             optimizer.step()
             # if jparams['Optimizer'] == 'Adam':
             #     net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)

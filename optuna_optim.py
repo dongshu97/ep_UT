@@ -6,6 +6,7 @@ import pandas
 import torchvision
 # import argparse
 import json
+import os
 from pathlib import Path
 from Data import *
 from Network_optuna import *
@@ -158,15 +159,28 @@ def jparamsCreate(pre_config, trial):
             jparams["errorEstimate"] = 'one-sided'
         else:
             jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
-        #TODO dropout use the defined parameters
+
         if jparams["Dropout"]:
             dropProb = []
-            for i in range(len(jparams["fcLayers"]) - 1):
-                drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                # to verify whether we need to change the name of drop_i
+            dropProb.append(0.2)
+            for i in range(1, len(jparams["fcLayers"])):
+                if jparams["fcLayers"][i] == jparams["n_class"]:
+                    drop_i = 0
+                else:
+                    drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
                 dropProb.append(drop_i)
             jparams["dropProb"] = dropProb.copy()
             jparams["dropProb"].reverse()
+
+        # if jparams["Dropout"]:
+        #     dropProb = []
+        #     for i in range(len(jparams["fcLayers"]) - 1):
+        #         drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
+        #         # to verify whether we need to change the name of drop_i
+        #         dropProb.append(drop_i)
+        #     jparams["dropProb"] = dropProb.copy()
+        #     jparams["dropProb"].reverse()
+
         if jparams["Prune"] == "Initiation":
             pruneAmount = []
             for i in range(len(jparams["fcLayers"]) - 1):
@@ -222,9 +236,10 @@ def jparamsCreate(pre_config, trial):
         #         else:
         #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
         #         dropProb.append(drop_i)
-        # jparams["dropProb"] = dropProb.copy()
-        jparams["dropProb"] = [0.2, 0.5, 0]
-        jparams["dropProb"].reverse()
+        #     jparams["dropProb"] = dropProb.copy()
+        if jparams["Dropout"]:
+            jparams["dropProb"] = [0.2, 0.5, 0]
+            jparams["dropProb"].reverse()
 
         # if jparams["Prune"] == "Initiation":
         #     pruneAmount = []
@@ -519,6 +534,9 @@ if __name__=='__main__':
     else:
         BASE_PATH = os.getcwd()
         prefix = '/'
+
+    # Cuda problem
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
     # define Sampler
 

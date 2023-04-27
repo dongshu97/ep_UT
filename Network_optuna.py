@@ -32,7 +32,7 @@ def defineOptimizer(net, convNet, lr, type):
             net_params += [{'params': [net.W[i]], 'lr': lr[i]}]
             net_params += [{'params': [net.bias[i]], 'lr': lr[i]}]
     if type == 'SGD':
-        optimizer = torch.optim.SGD(net_params, momentum=0.9)
+        optimizer = torch.optim.SGD(net_params, momentum=0.998)
     elif type == 'Adam':
         optimizer = torch.optim.Adam(net_params)
     else:
