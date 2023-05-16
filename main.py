@@ -49,32 +49,6 @@ if jparams['torchSeed']:
 batch_size = jparams['batchSize']
 batch_size_test = jparams['test_batchSize']
 
-# if args.dataset == 'digits':
-#
-#     print('We use the DIGITS Dataset')
-#     from sklearn.datasets import load_digits
-#     from sklearn.model_selection import train_test_split
-#
-#     digits = load_digits()
-#
-#     # TODO make the class_seed of digits dataset
-#     x_total, x_class, y_total, y_class = train_test_split(digits.data, digits.target, test_size=0.1, random_state=0,
-#                                                           shuffle=True)
-#     x_train, x_test, y_train, y_test = train_test_split(x_total, y_total, test_size=0.15, random_state=0, shuffle=True)
-#
-#     x_class, x_train, x_test = x_class/16, x_train/16, x_test/16  # 0 to 1
-#
-#     class_data = DigitsDataset(x_class, labels=y_class, target_transforms=ReshapeTransformTarget(10))
-#     train_data = DigitsDataset(x_train, labels=y_train, target_transforms=ReshapeTransformTarget(10))
-#     test_data = DigitsDataset(x_test, labels=y_test, target_transforms=ReshapeTransformTarget(10))
-#
-#     len_class = len(x_class[:])
-#
-#     # dataloaders
-#     class_loader = torch.utils.data.DataLoader(class_data, batch_size=batch_size, shuffle=True)
-#     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
-#     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size_test, shuffle=False)
-
 
 if jparams['dataset'] == 'mnist':
     print('We use the MNIST Dataset')
@@ -212,6 +186,7 @@ elif jparams['activation_function'] == 'hardsigm':
 
     def rhop(x):
         return (x >= 0) & (x <= 1)
+
 elif jparams['activation_function'] == 'half_hardsigm':
     def rho(x):
         return (1 + F.hardtanh(x - 1))*0.5
@@ -251,9 +226,9 @@ if __name__ == '__main__':
         initial_lr = jparams['lr']
 
     if jparams['convNet']:
-        net = ConvEP(jparams)
+        net = ConvEP(jparams, rho, rhop)
     else:
-        net = torch.jit.script(MlpEP(jparams))
+        net = torch.jit.script(MlpEP(jparams, rho, rhop))
 
     # we define the optimizer
     net_params, optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])

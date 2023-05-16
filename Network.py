@@ -6,7 +6,6 @@ import torch.nn.functional as F
 import torch.jit as jit
 import torch.nn.utils.prune as prune
 
-from main import rho, rhop
 from typing import List, Optional, Tuple
 
 
@@ -57,7 +56,7 @@ class forwardNN(nn.Module):
 
 class MlpEP(jit.ScriptModule):
 
-    def __init__(self, jparams):
+    def __init__(self, jparams, rho, rhop):
 
         super(MlpEP, self).__init__()
 
@@ -75,6 +74,8 @@ class MlpEP(jit.ScriptModule):
         self.Prune = False
         self.W_mask = [1, 1]
         self.nudge_N = jparams['nudge_N']
+        self.rho = rho
+        self.rhop = rhop
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -84,6 +85,7 @@ class MlpEP(jit.ScriptModule):
             self.cuda = False
 
         self.device = device
+
         # # The following parameters are for Adam optimizer
         # self.beta1 = 0.9
         # self.beta2 = 0.999
@@ -169,19 +171,19 @@ class MlpEP(jit.ScriptModule):
                        target:Optional[torch.Tensor]=None,
                           beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor]:
 
-        y = F.softmax(torch.mm(rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
         if y_distribut is not None:
             y = y_distribut*y
 
         if len(h) > 1:
             dhdt=[]
-            dhdt.append(-h[0] + (rhop(h[0]) * (torch.mm(rho(h[1]), self.W[1]) + self.bias[1])))
+            dhdt.append(-h[0] + (self.rhop(h[0]) * (torch.mm(self.rho(h[1]), self.W[1]) + self.bias[1])))
             if target is not None and beta is not None:
                 dhdt[0] = dhdt[0] + beta * torch.mm((target-y), self.W[0].T)
 
             for layer in range(1, len(h)-1):
-                dhdt.append(-h[layer] + rhop(h[layer]) * (
-                            torch.mm(rho(h[layer + 1]), self.W[layer+1]) + self.bias[layer+1] + torch.mm(rho(h[layer - 1]),
+                dhdt.append(-h[layer] + self.rhop(h[layer]) * (
+                            torch.mm(self.rho(h[layer + 1]), self.W[layer+1]) + self.bias[layer+1] + torch.mm(self.rho(h[layer - 1]),
                                                                                                      self.W[layer].T)))
 
             for (layer, dhdt_item) in enumerate(dhdt):
@@ -201,7 +203,7 @@ class MlpEP(jit.ScriptModule):
 
         T, Kmax = self.T, self.Kmax
 
-        y = F.softmax(torch.mm(rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
         if y_distribut is not None:
             y = y_distribut*y
 
@@ -223,13 +225,13 @@ class MlpEP(jit.ScriptModule):
         '''
         dsdt = []
 
-        dsdt.append(-s[0] + (rhop(s[0])*(torch.mm(rho(s[1]), self.W[0]) + self.bias[0])))
+        dsdt.append(-s[0] + (self.rhop(s[0])*(torch.mm(self.rho(s[1]), self.W[0]) + self.bias[0])))
 
         if target is not None and beta is not None:
             dsdt[0] = dsdt[0] + beta*(target-s[0])
 
         for layer in range(1, len(s)-1):  # start at the first hidden layer and then to the before last hidden layer
-            dsdt.append(-s[layer] + rhop(s[layer])*(torch.mm(rho(s[layer+1]), self.W[layer])+self.bias[layer]+torch.mm(rho(s[layer-1]), self.W[layer-1].T)))
+            dsdt.append(-s[layer] + self.rhop(s[layer])*(torch.mm(self.rho(s[layer+1]), self.W[layer])+self.bias[layer]+torch.mm(self.rho(s[layer-1]), self.W[layer-1].T)))
 
         for (layer, dsdt_item) in enumerate(dsdt):
             if p_distribut is not None:
@@ -308,9 +310,9 @@ class MlpEP(jit.ScriptModule):
 
         with torch.no_grad():
             for layer in range(len(s)-1):
-                gradW.append(coef*(torch.mm(torch.transpose(rho(s[layer+1]), 0, 1), rho(s[layer]))
-                                   -torch.mm(torch.transpose(rho(seq[layer+1]), 0, 1), rho(seq[layer]))))
-                gradBias.append(coef*(rho(s[layer])-rho(seq[layer])).sum(0))
+                gradW.append(coef*(torch.mm(torch.transpose(self.rho(s[layer+1]), 0, 1), self.rho(s[layer]))
+                                   -torch.mm(torch.transpose(self.rho(seq[layer+1]), 0, 1), self.rho(seq[layer]))))
+                gradBias.append(coef*(self.rho(s[layer])-self.rho(seq[layer])).sum(0))
 
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
@@ -329,16 +331,16 @@ class MlpEP(jit.ScriptModule):
         # TODO update the gradients in self.W[i].grad
         with torch.no_grad():
             if ybeta is None:
-                gradW.append(-(1/batch_size)*torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)))
+                gradW.append(-(1/batch_size)*torch.mm(torch.transpose(self.rho(h[0]), 0, 1), (y-target)))
                 gradBias.append(-(1/batch_size)*(y-target).sum(0))
             else:
-                gradW.append(-(0.5/batch_size)*(1/batch_size)*(torch.mm(torch.transpose(rho(h[0]), 0, 1), (y-target)) +
-                                          torch.mm(torch.transpose(rho(heq[0]), 0, 1), (ybeta-target))))
+                gradW.append(-(0.5/batch_size)*(1/batch_size)*(torch.mm(torch.transpose(self.rho(h[0]), 0, 1), (y-target)) +
+                                          torch.mm(torch.transpose(self.rho(heq[0]), 0, 1), (ybeta-target))))
                 gradBias.append(-(0.5/batch_size)*(y+ybeta-2*target).sum(0))
             for layer in range(len(h)-1):
-                gradW.append(coef * (torch.mm(torch.transpose(rho(h[layer + 1]), 0, 1), rho(h[layer]))
-                                     - torch.mm(torch.transpose(rho(heq[layer + 1]), 0, 1), rho(heq[layer]))))
-                gradBias.append(coef * (rho(h[layer]) - rho(heq[layer])).sum(0))
+                gradW.append(coef * (torch.mm(torch.transpose(self.rho(h[layer + 1]), 0, 1), self.rho(h[layer]))
+                                     - torch.mm(torch.transpose(self.rho(heq[layer + 1]), 0, 1), self.rho(heq[layer]))))
+                gradBias.append(coef * (self.rho(h[layer]) - self.rho(heq[layer])).sum(0))
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
@@ -639,7 +641,7 @@ class ConvEP(nn.Module):
     '''
     # Try to use the jit version
 
-    def __init__(self, jparams):
+    def __init__(self, jparams, rho, rhop):
 
         super(ConvEP, self).__init__()
 
@@ -649,6 +651,8 @@ class ConvEP(nn.Module):
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
         self.errorEstimate = jparams['errorEstimate']
+        self.rho = rho
+        self.rhop = rhop
 
         if jparams['dataset'] == 'mnist':
             input_size = 28
@@ -754,20 +758,20 @@ class ConvEP(nn.Module):
         dsdt = []
 
         # fully connected layer (classifier part)
-        dsdt.append(-s[0]+rho(self.W[0](s[1].view(s[1].size(0), -1))))  # flatten the s[1]? does it necessary?
+        dsdt.append(-s[0]+self.rho(self.W[0](s[1].view(s[1].size(0), -1))))  # flatten the s[1]? does it necessary?
 
         if beta != 0:
             dsdt[0] = dsdt[0] + beta*(target-s[0])
 
         for i in range(1, len(self.fcLayers)-1):
-            dsdt.append(-s[i] + rho(self.W[i](s[i+1].view(s[i+1].size(0), -1)) + torch.mm(s[i-1], self.W[i-1].weight)))
+            dsdt.append(-s[i] + self.rho(self.W[i](s[i+1].view(s[i+1].size(0), -1)) + torch.mm(s[i-1], self.W[i-1].weight)))
             # at the same time we flatten the layer before
 
         # Convolutional part
         # last conv layer
         s_pool, ind = self.pool(self.Conv[0](s[self.fc_number+1]))
         P_ind[0] = ind  # len(P_ind) = conv_number
-        dsdt.append(-s[self.fc_number] + rho(s_pool + torch.mm(s[self.fc_number-1], self.W[-1].weight).view(s[self.fc_number].size()))) # unflatten the result
+        dsdt.append(-s[self.fc_number] + self.rho(s_pool + torch.mm(s[self.fc_number-1], self.W[-1].weight).view(s[self.fc_number].size()))) # unflatten the result
         del s_pool, ind
 
         # middle conv layers
@@ -780,7 +784,7 @@ class ConvEP(nn.Module):
                                self.size_conv_list[i-1]]
                 s_unpool = F.conv_transpose2d(self.unpool(s[self.fc_number+i-1], P_ind[i-1], output_size=output_size),
                                               weight=self.Conv[i-1].weight, padding=self.pad)
-                dsdt.append(-s[self.fc_number+i] + rho(s_pool + s_unpool))
+                dsdt.append(-s[self.fc_number+i] + self.rho(s_pool + s_unpool))
                 del s_pool, s_unpool, ind, output_size
 
         # first conv layer
@@ -790,7 +794,7 @@ class ConvEP(nn.Module):
             output_size = [s[-2].size(0), s[-2].size(1), self.size_conv_list[-3], self.size_conv_list[-3]]
             s_unpool = F.conv_transpose2d(self.unpool(s[-2], P_ind[-2], output_size=output_size),
                                           weight=self.Conv[-2].weight, padding=self.pad)
-            dsdt.append(-s[-1] + rho(s_pool + s_unpool))
+            dsdt.append(-s[-1] + self.rho(s_pool + s_unpool))
             del s_pool, s_unpool, ind, output_size
 
         for i in range(len(s)):

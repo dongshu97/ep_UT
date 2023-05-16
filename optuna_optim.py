@@ -9,8 +9,8 @@ import json
 import os
 from pathlib import Path
 from Data import *
-from Network_optuna import *
-from Tools_optuna import *
+from Network import *
+from Tools import *
 
 if os.name != 'posix':
     prefix = '\\'
@@ -364,7 +364,7 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
+        unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
         for epoch in tqdm(range(jparams["epochs"])):
             # supervised reminder
@@ -423,7 +423,7 @@ def objective(trial, pre_config):
             train_loader,  validation_loader, class_loader, layer_loader = returnMNIST(jparams)
 
     # create the model
-    net = torch.jit.script(MlpEP(jparams))
+    net = torch.jit.script(MlpEP(jparams, rho, rhop))
     # TODO to include the CNN version
     if jparams['pre_epochs'] > 0:
         initial_lr = jparams['pre_lr']
@@ -431,7 +431,7 @@ def objective(trial, pre_config):
         initial_lr = jparams['lr']
 
     # define the optimizer
-    optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
+    net_params, optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
 
     # load the trained unsupervised network when we train classification layer
     if jparams["action"] == 'class_layer':

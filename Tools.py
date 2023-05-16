@@ -598,7 +598,7 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
         # unsupervised targets
         output = s[0].clone()
         unsupervised_targets, maxindex = net.unsupervised_target(output, jparams['nudge_N'], Xth)
-        unsupervised_targets = net.smoothLabels(unsupervised_targets, smooth_factor=0.3)
+        unsupervised_targets = net.smoothLabels(unsupervised_targets, smooth_factor=0.2)
 
         if jparams['errorEstimate'] == 'one-sided':
             # nudging phase
@@ -607,10 +607,6 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
             # update the weights
             net.computeGradientsEP(s, seq)
             optimizer.step()
-            # if jparams['Optimizer'] == 'Adam':
-            #     net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
-            # else:
-            #     net.updateWeight(s, seq, lr, epoch=net.epoch)
 
         elif jparams['errorEstimate'] == 'symmetric':
             # + beta
@@ -625,10 +621,6 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
             # update and track the weights of the network
             net.computeGradientsEP(splus, smoins)
             optimizer.step()
-            # if jparams['Optimizer'] == 'Adam':
-            #     net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
-            # else:
-            #     net.updateWeight(splus, smoins, lr, epoch=net.epoch)
 
         if jparams['Dropout']:
             target_activity =jparams['nudge_N'] / (jparams['fcLayers'][0] * (1 - jparams['dropProb'][0]))  # dropout influences the target activity
