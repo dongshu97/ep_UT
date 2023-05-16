@@ -1,8 +1,43 @@
-# output=500 perceptron
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
-python main.py --device 0 --dataset mnist --action unsupervised_ep --epochs 25 --batchSize 237 --dt 0.2 --T 40 --Kmax 15 --beta 0.2 --convNet 0 --fcLayers 784 500 --lr 0.022 --activation_function hardsigm --eta 0.071 --gamma 0.518 --nudge_N 4
+# supervised little dataset
+# label = 1000
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.0055-0.00625_batch25_beta0.223_symmetric_epoch200'
+#
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+#python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00332-0.00193_batch16_beta0.195_symmetric_epoch200'
+
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\1000label_half-hardsigm_Cross-entropy_lr0.00849-0.00259_batch31_beta0.497_symmetric_epoch200'
+
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00243-0.00893_batch59_drop0.20.50_symmetric_epoch200'
+
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00387-0.00648_batch81_drop0.20.50_symmetric_epoch200'
+
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
+python main.py --json_path 'D:\Results_data\supervisedEP_littleDataset\3000label_half-hardsigm_Cross-entropy_lr0.00428-0.00996_batch44_drop0.20.50_symmetric_epoch200'
