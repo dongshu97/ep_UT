@@ -32,7 +32,7 @@ def defineOptimizer(net, convNet, lr, type):
             net_params += [{'params': [net.W[i]], 'lr': lr[i]}]
             net_params += [{'params': [net.bias[i]], 'lr': lr[i]}]
     if type == 'SGD':
-        optimizer = torch.optim.SGD(net_params, momentum=0.998)
+        optimizer = torch.optim.SGD(net_params)
     elif type == 'Adam':
         optimizer = torch.optim.Adam(net_params)
     else:
@@ -74,6 +74,7 @@ class MlpEP(jit.ScriptModule):
         self.gamma = jparams['gamma']
         self.Prune = False
         self.W_mask = [1, 1]
+        self.nudge_N = jparams['nudge_N']
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -546,6 +547,18 @@ class MlpEP(jit.ScriptModule):
 
         return unsupervised_targets, N_maxindex
 
+    def smoothLabels(self, labels, smooth_factor):
+        assert len(labels.shape) == 2, 'input should be a batch of one-hot-encoded data'
+        assert 0 <= smooth_factor <= 1, 'smooth_factor should be between 0 and 1'
+
+        if 0 <= smooth_factor <= 1:
+            # label smoothing
+            labels *= 1 - smooth_factor
+            labels += (self.nudge_N*smooth_factor) / labels.shape[1]
+        else:
+            raise ValueError('Invalid label smoothing factor: ' + str(smooth_factor))
+        return labels
+
     def initState(self, data, drop_visible=None):
         '''
         Init the state of the network
@@ -918,6 +931,22 @@ class ConvEP(nn.Module):
     #     h.reverse()
     #
     #     return s, h, P_ind
+
+    def unsupervised_target(self, output, N, Xth=None):
+
+        # define unsupervised target
+        unsupervised_targets = torch.zeros(output.size(), device=self.device)
+
+        # N_maxindex
+        if Xth != None:
+            N_maxindex = torch.topk(output.detach()-Xth, N).indices  # N_maxindex has the size of (batch, N)
+        else:
+            N_maxindex = torch.topk(output.detach(), N).indices
+
+        unsupervised_targets.scatter_(1, N_maxindex, torch.ones(output.size(), device=self.device))
+        # print('the unsupervised vector is:', unsupervised_targets)
+
+        return unsupervised_targets, N_maxindex
 
     def initHidden(self, batch_size):
         s = []

@@ -591,15 +591,16 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
         if jparams['weightNormalization']:
             net.weightNormalization()
 
+        # free phase
+        s = net.forward(s, p_distribut)
+        seq = s.copy()
+
+        # unsupervised targets
+        output = s[0].clone()
+        unsupervised_targets, maxindex = net.unsupervised_target(output, jparams['nudge_N'], Xth)
+        unsupervised_targets = net.smoothLabels(unsupervised_targets, smooth_factor=0.3)
+
         if jparams['errorEstimate'] == 'one-sided':
-            # free phase
-            s = net.forward(s, p_distribut)
-            seq = s.copy()
-
-            # unsupervised targets
-            output = s[0].clone()
-            unsupervised_targets, maxindex = net.unsupervised_target(output, jparams['nudge_N'], Xth)
-
             # nudging phase
             s = net.forward(s, p_distribut, target=unsupervised_targets, beta=net.beta)
 
@@ -612,15 +613,6 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
             #     net.updateWeight(s, seq, lr, epoch=net.epoch)
 
         elif jparams['errorEstimate'] == 'symmetric':
-
-            # free phase
-            s = net.forward(s, p_distribut)
-            seq = s.copy()
-
-            # unsupervised target
-            output = s[0].clone()
-            unsupervised_targets, maxindex = net.unsupervised_target(output, jparams['nudge_N'], Xth)
-
             # + beta
             s = net.forward(s, p_distribut, target=unsupervised_targets, beta=net.beta)
             splus = s.copy()
@@ -830,6 +822,7 @@ def initDataframe(path, method='supervised', dataframe_to_init='results.csv'):
         elif method == 'unsupervised':
             columns_header = ['Test_Error_av', 'Min_Test_Error_av', 'Test_Error_max', 'Min_Test_Error_max']
         elif method == 'semi-supervised':
+            # TODO maybe to be changed
             columns_header = ['Supervised_Test_Error', 'Min_Supervised_Test_Error', 'Entire_Test_Error', 'Min_Entire_Test_Error']
         elif method == 'classification_layer':
             columns_header = ['Train_Class_Error', 'Min_Train_Class_Error', 'Final_Test_Error', 'Min_Final_Test_Error',
