@@ -39,6 +39,79 @@ def defineOptimizer(net, convNet, lr, type):
 
     return net_params, optimizer
 
+
+def mydropout(s:List[torch.Tensor], p:List[float], y:Optional[torch.Tensor]=None)->List[torch.FloatTensor]:
+
+    # if p < 0 or p > 1:
+    #     raise ValueError("dropout probability has to be between 0 and 1, " "but got {}".format(p))
+    p_distribut = []
+    # bernoulli = torch.distributions.bernoulli.Bernoulli(total_count=1, probs=1-p)
+    if y is None:
+        for layer in range(len(s)):
+            if p[layer] == 0:
+                p_distribut.append(torch.ones(s[layer].size()))
+            else:
+                binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1-p[layer]))
+                p_distribut.append(binomial.sample(s[layer].size()))
+        return p_distribut
+    else:
+        if p[0] == 0:
+            y_distribut = torch.ones(y.size())
+        else:
+            binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[0]))
+            y_distribut = binomial.sample(y.size())
+        for layer in range(len(s)):
+            if p[layer+1] == 0:
+                p_distribut.append(torch.ones(s[layer].size()))
+            else:
+                binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[layer+1]))
+                p_distribut.append(binomial.sample(s[layer].size()))
+        return p_distribut, y_distribut
+
+
+def smoothLabels(labels, smooth_factor, nudge_N):
+    assert len(labels.shape) == 2, 'input should be a batch of one-hot-encoded data'
+    assert 0 <= smooth_factor <= 1, 'smooth_factor should be between 0 and 1'
+
+    if 0 <= smooth_factor <= 1:
+        # label smoothing
+        labels *= 1 - smooth_factor
+        labels += (nudge_N*smooth_factor) / labels.shape[1]
+    else:
+        raise ValueError('Invalid label smoothing factor: ' + str(smooth_factor))
+    return labels
+
+
+def define_unsupervised_target(output, N, device, Xth=None):
+
+    # define unsupervised target
+    unsupervised_targets = torch.zeros(output.size(), device=device)
+
+    # N_maxindex
+    if Xth != None:
+        N_maxindex = torch.topk(output.detach()-Xth, N).indices  # N_maxindex has the size of (batch, N)
+    else:
+        N_maxindex = torch.topk(output.detach(), N).indices
+
+    # # !!! Attention if we consider the 0 and 1, which means we expect the values of input is between 0 and 1
+    # # This probability occurs when we clamp the 'vector' between 0 and 1
+    #
+    # # Extract the batch where all the outputs are 0
+    # # Consider the case where output is all 0 or 1
+    # sum_output = torch.sum(m_output, axis=1)
+    # indices_0 = (sum_output == 0).nonzero(as_tuple=True)[0]
+    #
+    # if indices_0.nelement() != 0:
+    #     for i in range(indices_0.nelement()):
+    #         N_maxindex[indices_0[i], :] = torch.randint(0, self.output-1, (N,))
+
+    # unsupervised_targets[N_maxindex] = 1
+    unsupervised_targets.scatter_(1, N_maxindex, torch.ones(output.size(), device=device))
+    # print('the unsupervised vector is:', unsupervised_targets)
+
+    return unsupervised_targets, N_maxindex
+
+
 class forwardNN(nn.Module):
     def __init__(self, fcLayers, ep_W):
         super(forwardNN, self).__init__()
@@ -73,7 +146,6 @@ class MlpEP(jit.ScriptModule):
         self.gamma = jparams['gamma']
         self.Prune = False
         self.W_mask = [1, 1]
-        self.nudge_N = jparams['nudge_N']
         self.rho = rho
         self.rhop = rhop
         # define the device
@@ -137,34 +209,6 @@ class MlpEP(jit.ScriptModule):
 
         self = self.to(device)
 
-    #@jit.script_method
-    def mydropout(self, s:List[torch.Tensor], p:List[float], y:Optional[torch.Tensor]=None)->List[torch.FloatTensor]:
-
-        # if p < 0 or p > 1:
-        #     raise ValueError("dropout probability has to be between 0 and 1, " "but got {}".format(p))
-        p_distribut = []
-        # bernoulli = torch.distributions.bernoulli.Bernoulli(total_count=1, probs=1-p)
-        if y is None:
-            for layer in range(len(s)):
-                if p[layer] == 0:
-                    p_distribut.append(torch.ones(s[layer].size()))
-                else:
-                    binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1-p[layer]))
-                    p_distribut.append(binomial.sample(s[layer].size()))
-            return p_distribut
-        else:
-            if p[0] == 0:
-                y_distribut = torch.ones(y.size())
-            else:
-                binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[0]))
-                y_distribut = binomial.sample(y.size())
-            for layer in range(len(s)):
-                if p[layer+1] == 0:
-                    p_distribut.append(torch.ones(s[layer].size()))
-                else:
-                    binomial = torch.distributions.binomial.Binomial(probs=torch.tensor(1 - p[layer+1]))
-                    p_distribut.append(binomial.sample(s[layer].size()))
-            return p_distribut, y_distribut
 
     @jit.script_method
     def stepper_hidden(self, h:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]], y_distribut:Optional[torch.Tensor],
@@ -345,148 +389,6 @@ class MlpEP(jit.ScriptModule):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
 
-    # #@jit.script_method
-    # def updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-    #                          lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
-    #
-    #     '''update the weights and biases of network with a softmax output'''
-    #
-    #     gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
-    #     with torch.no_grad():
-    #         # update the hidden layers
-    #         for layer in range(len(self.W)):
-    #             lrDecay = lr[layer] * torch.pow(self.coeffDecay, int(epoch / self.epochDecay))
-    #
-    #             self.W[layer] += lrDecay*gradW[layer]
-    #             self.bias[layer] += lrDecay*gradBias[layer]
-    #         if self.Prune is True:
-    #             for layer in range(len(self.W)):
-    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-    #
-    # #@jit.script_method
-    # def Adam_updateWeight_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
-    #                               lr:List[float], ybeta:Optional[torch.Tensor]=None, epoch:int=1):
-    #     gradW, gradBias = self.computeGradientEP_softmax(h, heq, y, target, ybeta=ybeta)
-    #
-    #     m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
-    #     # update weights and bias
-    #     with torch.no_grad():
-    #         # lrDecay = 0.01*np.power(0.97, epoch)
-    #         # lrDecay = 0.01*np.power(0.5, int(epoch/10))
-    #
-    #         for layer in range(len(self.W)):
-    #             # calculate the iteration momentum and velocity
-    #             m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
-    #             m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
-    #
-    #             v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer] ** 2))
-    #             v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer] ** 2))
-    #
-    #             # bias correction
-    #             m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
-    #             m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
-    #             v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
-    #             v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
-    #
-    #             # update the weight
-    #             # TODO solve the problem of torch.pow or np.power
-    #             lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay),
-    #                                                  torch.tensor(int(epoch / self.epochDecay)))
-    #
-    #             self.W[layer] += lrDecay * (m_dw_corr / (torch.sqrt(v_dw_corr) + self.epsillon))
-    #             self.bias[layer] += lrDecay * (m_db_corr / (torch.sqrt(v_db_corr) + self.epsillon))
-    #         if self.Prune is True:
-    #             for layer in range(len(self.W)):
-    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-    #
-    #     self.m_dw = m_dw_new
-    #     self.m_db = m_db_new
-    #     self.v_dw = v_dw_new
-    #     self.v_db = v_db_new
-    #
-    # @jit.script_method
-    # def updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
-    #     '''
-    #     Update weights and bias according to EQ algo
-    #     '''
-    #
-    #     gradW, gradBias = self.computeGradientsEP(s, seq)
-    #
-    #     with torch.no_grad():
-    #         #lrDecay = 0.01*np.power(0.97, epoch)
-    #         #lrDecay = 0.01*np.power(0.5, int(epoch/10))
-    #         if self.randomHidden:
-    #             lrDecay = lr[0]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-    #             self.W[0] += lrDecay*gradW[0]
-    #             self.bias[0] += lrDecay*gradBias[0]
-    #         else:
-    #             for layer in range(len(self.W)):
-    #                 #lrDecay = self.lr[layer]
-    #                 # TODO solve the problem of torch.pow or np.power
-    #                 lrDecay = lr[layer]*torch.pow(self.coeffDecay, int(epoch/self.epochDecay))
-    #                 #print('the decayed lr is:', lrDecay)
-    #                 # print('alpha is:', alpha[layer])
-    #
-    #                 self.W[layer] += lrDecay*gradW[layer]
-    #                 self.bias[layer] += lrDecay*gradBias[layer]
-    #
-    #         if self.Prune is True:
-    #             for layer in range(len(self.W)):
-    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-    #
-    # @jit.script_method
-    # def Adam_updateWeight(self, s:List[torch.Tensor], seq:List[torch.Tensor], lr:List[float], epoch:int=1):
-    #     '''
-    #     Update weights using the Adam optimizer
-    #     '''
-    #     #
-    #     # m_dw_before: List[torch.Tensor], m_db_before: List[torch.Tensor],
-    #     # v_dw_before: List[torch.Tensor], v_db_before: List[torch.Tensor],
-    #     # calculate the gradients
-    #     gradW, gradBias = self.computeGradientsEP(s, seq)
-    #
-    #     m_dw_new, m_db_new, v_dw_new, v_db_new = [], [], [], []
-    #     # update weights and bias
-    #     with torch.no_grad():
-    #         # lrDecay = 0.01*np.power(0.97, epoch)
-    #         # lrDecay = 0.01*np.power(0.5, int(epoch/10))
-    #
-    #         for layer in range(len(self.W)):
-    #             # calculate the iteration momentum and velocity
-    #             m_dw_new.append(self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer])
-    #             m_db_new.append(self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer])
-    #             #self.m_dw[layer] = self.beta1 * self.m_dw[layer] + (1 - self.beta1) * gradW[layer]  # momentum for weights
-    #             #self.m_db[layer] = self.beta1 * self.m_db[layer] + (1 - self.beta1) * gradBias[layer]  # momentum for bias
-    #
-    #             v_dw_new.append(self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2))
-    #             v_db_new.append(self.beta2 * self.v_db[layer] + (1 - self.beta2) * (gradBias[layer]**2))
-    #
-    #             #self.v_dw[layer] = self.beta2 * self.v_dw[layer] + (1 - self.beta2) * (gradW[layer]**2)  # velocity for weights
-    #             #self.v_db[layer] = self.beta2 * self.v_db[layer] + (1 - self.beta2) * gradBias[layer]  # velocity for bias
-    #
-    #             # bias correction
-    #             m_dw_corr = m_dw_new[layer] / (1 - self.beta1 ** epoch)
-    #             m_db_corr = m_db_new[layer] / (1 - self.beta1 ** epoch)
-    #             v_dw_corr = v_dw_new[layer] / (1 - self.beta2 ** epoch)
-    #             v_db_corr = v_db_new[layer] / (1 - self.beta2 ** epoch)
-    #
-    #             # update the weight
-    #             # TODO solve the problem of torch.pow or np.power
-    #             lrDecay = lr[layer] * torch.pow(torch.tensor(self.coeffDecay), torch.tensor(int(epoch / self.epochDecay)))
-    #             # print('the decayed lr is:', lrDecay)
-    #             # print('alpha is:', alpha[layer])
-    #             self.W[layer] += lrDecay*(m_dw_corr/(torch.sqrt(v_dw_corr) + self.epsillon))
-    #             self.bias[layer] += lrDecay*(m_db_corr/(torch.sqrt(v_db_corr) + self.epsillon))
-    #
-    #         if self.Prune is True:
-    #             for layer in range(len(self.W)):
-    #                 self.W[layer] = self.W[layer].mul(self.W_mask[layer])
-    #
-    #     self.m_dw = m_dw_new
-    #     self.m_db = m_db_new
-    #     self.v_dw = v_dw_new
-    #     self.v_db = v_db_new
-
     @jit.script_method
     def weightNormalization(self):
         '''
@@ -518,48 +420,6 @@ class MlpEP(jit.ScriptModule):
     def deleteBias(self):
         nn.init.zeros_(self.bias[0])
 
-    # def softmax_target(self, output):
-
-    def unsupervised_target(self, output, N, Xth=None):
-
-        # define unsupervised target
-        unsupervised_targets = torch.zeros(output.size(), device=self.device)
-
-        # N_maxindex
-        if Xth != None:
-            N_maxindex = torch.topk(output.detach()-Xth, N).indices  # N_maxindex has the size of (batch, N)
-        else:
-            N_maxindex = torch.topk(output.detach(), N).indices
-
-        # # !!! Attention if we consider the 0 and 1, which means we expect the values of input is between 0 and 1
-        # # This probability occurs when we clamp the 'vector' between 0 and 1
-        #
-        # # Extract the batch where all the outputs are 0
-        # # Consider the case where output is all 0 or 1
-        # sum_output = torch.sum(m_output, axis=1)
-        # indices_0 = (sum_output == 0).nonzero(as_tuple=True)[0]
-        #
-        # if indices_0.nelement() != 0:
-        #     for i in range(indices_0.nelement()):
-        #         N_maxindex[indices_0[i], :] = torch.randint(0, self.output-1, (N,))
-
-        # unsupervised_targets[N_maxindex] = 1
-        unsupervised_targets.scatter_(1, N_maxindex, torch.ones(output.size(), device=self.device))
-        # print('the unsupervised vector is:', unsupervised_targets)
-
-        return unsupervised_targets, N_maxindex
-
-    def smoothLabels(self, labels, smooth_factor):
-        assert len(labels.shape) == 2, 'input should be a batch of one-hot-encoded data'
-        assert 0 <= smooth_factor <= 1, 'smooth_factor should be between 0 and 1'
-
-        if 0 <= smooth_factor <= 1:
-            # label smoothing
-            labels *= 1 - smooth_factor
-            labels += (self.nudge_N*smooth_factor) / labels.shape[1]
-        else:
-            raise ValueError('Invalid label smoothing factor: ' + str(smooth_factor))
-        return labels
 
     def initState(self, data, drop_visible=None):
         '''
@@ -888,69 +748,6 @@ class ConvEP(nn.Module):
         for (i, param) in enumerate(self.Conv):
             param.weight.grad = -gradW_conv[i]
             param.bias.grad = -gradBias_conv[i]
-
-        # return gradW_conv, gradBias_conv, gradW_fc, gradBias_fc
-
-    # def updateConvWeight(self, data, s, seq, P_ind, Peq_ind, lr):
-    #
-    #     gradW_conv, gradBias_conv, gradW_fc, gradBias_fc = self.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
-    #
-    #     # for i in range(len(self.fc)):
-    #     #     self.fc[i].weight += lr_tab[i] * gradfc[i]
-    #     #     self.fc[i].bias += lr_tab[i] * gradfc_bias[i]
-    #     # for i in range(len(self.conv)):
-    #     #     self.conv[i].weight += lr_tab[i + len(self.fc)] * gradconv[i]
-    #     #     self.conv[i].bias += lr_tab[i + len(self.fc)] * gradconv_bias[i]
-    #
-    #     # TODO consider change the lr sign for the random beta sign
-    #     with torch.no_grad():
-    #         for (i, param) in enumerate(self.W):
-    #             param.weight.data += lr[i] * gradW_fc[i]
-    #             param.bias.data += lr[i] * gradBias_fc[i]
-    #
-    #         for (i, param) in enumerate(self.Conv):
-    #             param.weight.data += lr[i+self.fc_number] * gradW_conv[i]
-    #             param.bias.data += lr[i+self.fc_number] * gradBias_conv[i]
-
-    # def initState(self, args, data):
-    #     '''
-    #     Inite the state of CNN
-    #     '''
-    #     h, s = [], []
-    #     P_ind = []
-    #     batch_size = data.size(0)
-    #     for fc in range(len(args.fcLayers)-1):
-    #         s.append(torch.zeros(batch_size, args.fcLayers[fc], requires_grad=False))
-    #
-    #     # TODO verify the input data size
-    #     h.append(data.float())
-    #     for cv in range(1, len(self.conv_number)):
-    #         # data size of convolutional layer : (batch, channel, size, size)
-    #         # output size is calculated by (M-F+2P)/S + 1
-    #         output_size = (h[cv-1].size(-1)-args.convLayers[(cv-1)*5+2] + 2*args.convLayers[(cv-1)*5+4])/args.convLayers[(cv-1)*5+3] +1
-    #         h.append(torch.zeros(batch_size, args.convLayers[(cv-1)*5+1], output_size, output_size))
-    #         P_ind.append(None)
-    #
-    #     #  we reverse the h at the end
-    #     h.reverse()
-    #
-    #     return s, h, P_ind
-
-    def unsupervised_target(self, output, N, Xth=None):
-
-        # define unsupervised target
-        unsupervised_targets = torch.zeros(output.size(), device=self.device)
-
-        # N_maxindex
-        if Xth != None:
-            N_maxindex = torch.topk(output.detach()-Xth, N).indices  # N_maxindex has the size of (batch, N)
-        else:
-            N_maxindex = torch.topk(output.detach(), N).indices
-
-        unsupervised_targets.scatter_(1, N_maxindex, torch.ones(output.size(), device=self.device))
-        # print('the unsupervised vector is:', unsupervised_targets)
-
-        return unsupervised_targets, N_maxindex
 
     def initHidden(self, batch_size):
         s = []

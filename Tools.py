@@ -17,6 +17,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from Network import*
 
+
 def classify(net, jparams, class_loader):
 
     net.eval()
@@ -229,324 +230,180 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
     return test_error, loss_test
 
 
-def train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
-    net.train()
-    net.epoch = epoch + 1
+def Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
+    # TODO add the dropout in the ConvNet (there is no dropout in the ConvNet yet)
     total_train = torch.zeros(1, device=net.device).squeeze()
     correct_train = torch.zeros(1, device=net.device).squeeze()
 
-    # parameters = []
-    # for i in range(len(jparams['fcLayers'])-1):
-    #     parameters += [{'params':[net.W[i]], 'lr':lr[i]}]
-    #     parameters += [{'params':[net.bias[i]], 'lr':lr[i]}]
-    #
-    # optimizer = torch.optim.SGD(parameters, momentum=0.998)
-    # #optimizer = torch.optim.Adam(parameters)
-
     for batch_idx, (data, targets) in enumerate(train_loader):
-        # TODO grads=0
         optimizer.zero_grad()
         # random signed beta: better approximate the gradient
         net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-        # init the hidden layers
-        h, y = net.initHidden(data)
-
-        if jparams['Dropout']:
-            p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'], y=y)
-            del(h)
-            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
-            p_distribut = p_distribut[:-1]
-        else:
-            p_distribut, y_distribut = None, None
+        batchSize = data.size(0)
+        # initiate the neurons
+        s, P_ind = net.initHidden(batchSize)
 
         if net.cuda:
             targets = targets.to(net.device)
             net.beta = net.beta.to(net.device)
-            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
-            if jparams['Dropout']:
-                p_distribut = [item.to(net.device) for item in p_distribut]
-                y_distribut = y_distribut.to(net.device)
+            s = [item.to(net.device) for item in s]
+            data = data.to(net.device)  # this time data is not included in the neuron list
+
+        # free phase
+        s, P_ind = net.forward(s, data, P_ind)
+        seq = s.copy()
+        Peq_ind = P_ind.copy()
+
+        if Xth is not None:
+            del(targets)
+            output = s[0].clone()
+            targets, maxindex = define_unsupervised_target(output, jparams['nudge_N'], net.device, Xth)
+            targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
 
         if jparams['errorEstimate'] == 'one-sided':
-            # free phase
-            h, y = net.forward_softmax(h, p_distribut, y_distribut)
-            heq = h.copy()
-            yeq = y.clone()
-            # nudging phase
-            if len(h) > 1:
-                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
-            # TODO calculate the gradients
-            net.computeGradientEP_softmax(h, heq, y, targets)
+            # nudge phase
+            s, P_ind = net.forward(s, data, P_ind, beta=net.beta, target=targets)
 
+            # update weights
+            net.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
             optimizer.step()
-            # # update the weights
-            # if jparams['Optimizer'] == 'Adam':
-            #     net.Adam_updateWeight_softmax(h, heq, y, targets, lr, epoch=net.epoch)
-            # else:
-            #     net.updateWeight_softmax(h, heq, y, targets, lr)
+            # net.updateConvWeight(data, s, seq, P_ind, Peq_ind, lr)
 
         elif jparams['errorEstimate'] == 'symmetric':
-            if len(h) <= 1:
-                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
-            # free phase
-            h, y = net.forward_softmax(h, p_distribut, y_distribut)
-            heq = h.copy()
-            yeq = y.clone()
             # + beta
-            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
-            hplus = h.copy()
-            yplus = y.clone()
+            s, P_ind = net.forward(s, data, P_ind, beta=net.beta, target=targets)
+            splus = s.copy()
+            Pplus_ind = P_ind.copy()
+
+            s = seq.copy()
+            P_ind = Peq_ind.copy()
+
             # -beta
-            h = heq.copy()
-            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=-net.beta)
-            hmoins = h.copy()
-            ymoins = y.clone()
-        # update and track the weights of the network
-            net.computeGradientEP_softmax(hplus, hmoins, yplus, targets, ybeta=ymoins)
+            s, P_ind = net.forward(s, data, P_ind, beta=-net.beta, target=targets)
+            smoins = s.copy()
+            Pmoins_ind = P_ind.copy()
+
+            # update the weights
+            net.computeConvGradientEP(data, splus, smoins, Pplus_ind, Pmoins_ind)
             optimizer.step()
-            # if jparams['Optimizer'] == 'Adam':
-            #     net.Adam_updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins, epoch=net.epoch)
-            # else:
-            #     net.updateWeight_softmax(hplus, hmoins, yplus, targets, lr, ybeta=ymoins)
+        if Xth is None:
+            # calculate the training error
+            prediction = torch.argmax(seq[0].detach(), dim=1)
+            correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
+            total_train += targets.size(dim=0)
+        else:
+            target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
+            if jparams['batchSize'] == 1:
+                Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
+                Xth += net.gamma * (Y_p - target_activity)
+            else:
+                Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
 
-        # calculate the training error
-        prediction = torch.argmax(yeq.detach(), dim=1)
-        correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
-        total_train += targets.size(dim=0)
+    if Xth is None:
+        return 1 - correct_train / total_train
+    else:
+        return Xth
 
-    # calculate the train error
-    train_error = 1 - correct_train / total_train
-    return train_error
+
+def Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
+    total_train = torch.zeros(1, device=net.device).squeeze()
+    correct_train = torch.zeros(1, device=net.device).squeeze()
+
+    for batch_idx, (data, targets) in enumerate(train_loader):
+        optimizer.zero_grad()
+        # random signed beta: better approximate the gradient
+        net.beta = torch.sign(torch.randn(1)) * jparams['beta']
+        s = net.initState(data)
+
+        if jparams['Dropout']:
+            p_distribut = mydropout(s, p=jparams['dropProb'])
+            del (s)
+            s = net.initState(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
+        else:
+            p_distribut = None
+
+        if net.cuda:
+            targets = targets.to(net.device)
+            net.beta = net.beta.to(net.device)
+            s = [item.to(net.device) for item in s]  # no need to put data on the GPU as data is included in s!
+            if jparams['Dropout']:
+                p_distribut = [item.to(net.device) for item in p_distribut]
+
+        # free phase
+        s = net.forward(s, p_distribut)
+        seq = s.copy()
+
+        if Xth is not None:
+            del (targets)
+            output = s[0].clone()
+            targets, maxindex = define_unsupervised_target(output, jparams['nudge_N'], net.device, Xth)
+            targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
+
+        if jparams['errorEstimate'] == 'one-sided':
+            # nudge phase
+            s = net.forward(s, p_distribut, target=targets, beta=net.beta)
+
+            net.computeGradientsEP(s, seq)
+            optimizer.step()
+
+        elif jparams['errorEstimate'] == 'symmetric':
+            # + beta
+            s = net.forward(s, p_distribut, target=targets, beta=net.beta)
+            splus = s.copy()
+            # -beta
+            s = seq.copy()
+            s = net.forward(s, p_distribut, target=targets, beta=-net.beta)
+            smoins = s.copy()
+
+            net.computeGradientsEP(splus, smoins)
+            optimizer.step()
+
+        if Xth is None:
+            # calculate the training error
+            prediction = torch.argmax(seq[0].detach(), dim=1)
+            correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
+            total_train += targets.size(dim=0)
+        else:
+            if jparams['Dropout']:
+                target_activity = jparams['nudge_N'] / (jparams['fcLayers'][0] * (
+                            1 - jparams['dropProb'][0]))  # dropout influences the target activity
+                if jparams['batchSize'] == 1:
+                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
+
+                    Xth += net.gamma * (Y_p - target_activity) * p_distribut[0]
+                else:
+                    Xth += net.gamma * ((torch.sum(targets, axis=0) / torch.sum(p_distribut[0],
+                                                                                             axis=0)) - target_activity)
+
+            else:
+                target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
+                if jparams['batchSize'] == 1:
+                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
+                    Xth += net.gamma * (Y_p - target_activity)
+                else:
+                    Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
+    if Xth is None:
+        return 1 - correct_train / total_train
+    else:
+        return Xth
 
 
 def train_supervised_ep(net, jparams, train_loader, optimizer, epoch):
     net.train()
     net.epoch = epoch + 1
 
-    total_train = torch.zeros(1, device=net.device).squeeze()
-    correct_train = torch.zeros(1, device=net.device).squeeze()
-
     if jparams['convNet']:
-        # TODO add the dropout in the ConvNet (there is no dropout in the ConvNet yet)
-        for batch_idx, (data, targets) in enumerate(train_loader):
-            optimizer.zero_grad()
-            # random signed beta: better approximate the gradient
-            net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-            batchSize = data.size(0)
-            # initiate the neurons
-            s, P_ind = net.initHidden(batchSize)
-
-            if net.cuda:
-                targets = targets.to(net.device)
-                net.beta = net.beta.to(net.device)
-                s = [item.to(net.device) for item in s]
-                data = data.to(net.device)  # this time data is not included in the neuron list
-
-            if jparams['errorEstimate'] == 'one-sided':
-                # free phase
-                s, P_ind = net.forward(s, data, P_ind)
-
-                seq = s.copy()
-                Peq_ind = P_ind.copy()
-
-                s, P_ind = net.forward(s, data, P_ind, beta=net.beta, target=targets)
-
-                # update weights
-                net.computeConvGradientEP(data, s, seq, P_ind, Peq_ind)
-                optimizer.step()
-                # net.updateConvWeight(data, s, seq, P_ind, Peq_ind, lr)
-
-            elif jparams['errorEstimate'] == 'symmetric':
-                # free phase
-                s, P_ind = net.forward(s, data, P_ind)
-                seq = s.copy()
-                Peq_ind = P_ind.copy()
-
-                # + beta
-                s, P_ind = net.forward(s, data, P_ind, beta=net.beta, target=targets)
-                splus = s.copy()
-                Pplus_ind = P_ind.copy()
-
-                s = seq.copy()
-                P_ind = Peq_ind.copy()
-
-                # -beta
-                s, P_ind = net.forward(s, data, P_ind, beta=-net.beta, target=targets)
-                smoins = s.copy()
-                Pmoins_ind = P_ind.copy()
-
-                # update the weights
-                net.computeConvGradientEP(data, splus, smoins, Pplus_ind, Pmoins_ind)
-                optimizer.step()
-                # net.updateConvWeight(data, splus, smoins, Pplus_ind, Pmoins_ind, lr)
+        train_error = Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None)
 
     else:
-        for batch_idx, (data, targets) in enumerate(train_loader):
-            optimizer.zero_grad()
-            # random signed beta: better approximate the gradient
-            net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-            s = net.initState(data)
+        train_error = Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None)
 
-            if jparams['Dropout']:
-                p_distribut = net.mydropout(s, p=jparams['dropProb'])
-                del(s)
-                s = net.initState(data, drop_visible=p_distribut[-1])
-                p_distribut = p_distribut[:-1]
-            else:
-                p_distribut = None
-
-            if net.cuda:
-                targets = targets.to(net.device)
-                net.beta = net.beta.to(net.device)
-                s = [item.to(net.device) for item in s] #no need to put data on the GPU as data is included in s!
-                if jparams['Dropout']:
-                    p_distribut = [item.to(net.device) for item in p_distribut]
-
-            if jparams['errorEstimate'] == 'one-sided':
-                # free phase
-                s = net.forward(s, p_distribut)
-                seq = s.copy()
-                s = net.forward(s, p_distribut, target=targets, beta=net.beta)
-
-                net.computeGradientsEP(s, seq)
-                optimizer.step()
-                # if jparams['Optimizer'] == 'Adam':
-                #     net.Adam_updateWeight(s, seq, lr, epoch=net.epoch)
-                # else:
-                #     net.updateWeight(s, seq, lr)
-            elif jparams['errorEstimate'] == 'symmetric':
-                # free phase
-                s = net.forward(s, p_distribut)
-                seq = s.copy()
-                # + beta
-                s = net.forward(s, p_distribut, target=targets, beta=net.beta)
-                splus = s.copy()
-                # -beta
-                s = seq.copy()
-                s = net.forward(s, p_distribut, target=targets, beta=-net.beta)
-                smoins = s.copy()
-
-                net.computeGradientsEP(splus, smoins)
-                optimizer.step()
-            # # update and track the weights of the network
-            #     if jparams['Optimizer'] == 'Adam':
-            #         net.Adam_updateWeight(splus, smoins, lr, epoch=net.epoch)
-            #     else:
-            #         net.updateWeight(splus, smoins, lr)
-
-    # calculate the training error
-    prediction = torch.argmax(seq[0].detach(), dim=1)
-    correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
-    total_train += targets.size(dim=0)
-
-    # calculate the train error
-    train_error = 1 - correct_train / total_train
     return train_error
 
 
 # TODO the function of unsupervised_crossEntropy can be used in semi-supervised learning
-# TODO add the dropout
-def train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
-    net.train()
-    net.epoch = epoch + 1
 
-    # Stochastic mode
-    if jparams['batchSize'] == 1:
-        Y_p = torch.zeros(jparams['fcLayers'][0], device=net.device)
-
-    Xth = torch.zeros(jparams['fcLayers'][0], device=net.device)
-
-    # decide the factor
-    T_coef = 0.002
-    target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
-
-    for batch_idx, (data, targets) in enumerate(train_loader):
-        optimizer.zero_grad()
-        # random signed beta: better approximate the gradient
-        net.beta = torch.sign(torch.randn(1)) * jparams['beta']
-        # init the hidden layers
-        h, y = net.initHidden(data)
-
-        if jparams['Dropout']:
-            p_distribut, y_distribut = net.mydropout(h, p=jparams['dropProb'], y=y)
-            del(h)
-            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
-            p_distribut = p_distribut[:-1]
-        else:
-            p_distribut, y_distribut = None, None
-
-        if net.cuda:
-            targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
-            net.beta = net.beta.to(net.device)
-            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
-            if jparams['Dropout']:
-                p_distribut = [item.to(net.device) for item in p_distribut]
-                y_distribut = y_distribut.to(net.device)
-
-        if jparams['errorEstimate'] == 'one-sided':
-            # free phase
-            h, y = net.forward_softmax(h, p_distribut, y_distribut)
-            heq = h.copy()
-            yeq = y.clone()
-            # # define the targets by creating a new softmax function
-            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
-            # define the targets by argmax
-            unsupervised_targets, maxindex = net.unsupervised_target(yeq, jparams['nudge_N'], Xth)
-            # nudging phase
-            if len(h) > 1:
-                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
-
-            # update the weights
-            # if jparams['Optimizer'] == 'Adam':
-            #     net.Adam_updateWeight_softmax(h, heq, y, unsupervised_targets, lr, epoch=net.epoch)
-            # else:
-            #     net.updateWeight_softmax(h, heq, y, unsupervised_targets, lr)
-            net.computeGradientEP_softmax(h, heq, y, unsupervised_targets)
-            optimizer.step()
-
-        elif jparams['errorEstimate'] == 'symmetric':
-            if len(h) <= 1:
-                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
-            # free phase
-            h, y = net.forward_softmax(h, p_distribut, y_distribut)
-            heq = h.copy()
-            yeq = y.clone()
-            # # define the unsupervised targets
-            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
-            # define the unsupervised targets by argmax
-            unsupervised_targets, maxindex = net.unsupervised_target(yeq, jparams['nudge_N'], Xth)
-            # + beta
-            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
-            hplus = h.copy()
-            yplus = y.clone()
-            # -beta
-            h = heq.copy()
-            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=-net.beta)
-            hmoins = h.copy()
-            ymoins = y.clone()
-        # update and track the weights of the network
-        #     if jparams['Optimizer'] == 'Adam':
-        #         net.Adam_updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins, epoch=net.epoch)
-        #     else:
-        #         net.updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins)
-            net.computeGradientEP_softmax(hplus, hmoins, yplus, unsupervised_targets, ybeta=ymoins)
-            optimizer.step()
-        # calculate the Homeostasis
-        # nudge_sign = torch.sign(unsupervised_targets-yeq)
-        # A = torch.max(nudge_sign, torch.zeros(nudge_sign.size(), device=net.device))
-
-        # if args.batchSize == 1:
-        #     Y_p = (1 - args.eta) * Y_p + args.eta * A[0]
-        #     Xth += net.gamma * (Y_p - target_activity)
-        # else:
-        #     Xth += net.gamma * (torch.mean(A, axis=0) - target_activity)
-        if jparams['batchSize'] == 1:
-            Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * unsupervised_targets[0]
-            Xth += net.gamma * (Y_p - target_activity)
-        else:
-            Xth += net.gamma * (torch.mean(unsupervised_targets, axis=0) - target_activity)
-
-    return Xth
 
 
 def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
@@ -563,84 +420,12 @@ def train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch):
 
     Xth = torch.zeros(jparams['fcLayers'][0], device=net.device)
 
-    for batch_idx, (data, targets) in enumerate(train_loader):
-        optimizer.zero_grad()
-        #random signed beta: better approximate the gradient
-        net.beta = torch.sign(torch.randn(1)) * jparams['beta']
+    if jparams['convNet']:
+        Xth = Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=Xth)
 
-        #net.beta = args.beta
+    else:
+        Xth = Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=Xth)
 
-        s = net.initState(data)
-
-        if jparams['Dropout']:
-            p_distribut = net.mydropout(s, p=jparams['dropProb'])
-            del(s)
-            s = net.initState(data, drop_visible=p_distribut[-1])
-            p_distribut = p_distribut[:-1]
-        else:
-            p_distribut = None
-        # print('This distribut is:', p_distribut)
-
-        if net.cuda:
-            net.beta = net.beta.to(net.device)
-            s = [item.to(net.device) for item in s] #no need to put data on the GPU as data is included in s!
-            if jparams['Dropout']:
-                p_distribut = [item.to(net.device) for item in p_distribut]
-
-        # weight normalization before the free phase
-        if jparams['weightNormalization']:
-            net.weightNormalization()
-
-        # free phase
-        s = net.forward(s, p_distribut)
-        seq = s.copy()
-
-        # unsupervised targets
-        output = s[0].clone()
-        unsupervised_targets, maxindex = net.unsupervised_target(output, jparams['nudge_N'], Xth)
-        unsupervised_targets = net.smoothLabels(unsupervised_targets, smooth_factor=0.2)
-
-        if jparams['errorEstimate'] == 'one-sided':
-            # nudging phase
-            s = net.forward(s, p_distribut, target=unsupervised_targets, beta=net.beta)
-
-            # update the weights
-            net.computeGradientsEP(s, seq)
-            optimizer.step()
-
-        elif jparams['errorEstimate'] == 'symmetric':
-            # + beta
-            s = net.forward(s, p_distribut, target=unsupervised_targets, beta=net.beta)
-            splus = s.copy()
-
-            # - beta
-            s = seq.copy()
-            s = net.forward(s, p_distribut, target=unsupervised_targets, beta=-net.beta)
-            smoins = s.copy()
-
-            # update and track the weights of the network
-            net.computeGradientsEP(splus, smoins)
-            optimizer.step()
-
-        if jparams['Dropout']:
-            target_activity =jparams['nudge_N'] / (jparams['fcLayers'][0] * (1 - jparams['dropProb'][0]))  # dropout influences the target activity
-            if jparams['batchSize'] == 1:
-                Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * unsupervised_targets[0]
-
-                Xth += net.gamma * (Y_p - target_activity)*p_distribut[0]
-            else:
-                Xth += net.gamma * ((torch.sum(unsupervised_targets, axis=0)/torch.sum(p_distribut[0], axis=0)) -target_activity)
-
-        else:
-            target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
-            if jparams['batchSize'] == 1:
-                Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * unsupervised_targets[0]
-                Xth += net.gamma * (Y_p - target_activity)
-            else:
-                Xth += net.gamma * (torch.mean(unsupervised_targets, axis=0) - target_activity)
-                #Xth += net.gamma * (torch.sum(unsupervised_targets, axis=0)/torch.sum(p_distribut, axis=0)) -
-
-    # TODO make a version compatible with SGD and Adam
     return Xth
 
 
@@ -664,17 +449,28 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
         total_test += targets.size()[0]
 
         if jparams['lossFunction'] == 'MSE':
-            s = net.initState(data)
+            if jparams['convNet'] == 1:
+                # initiate the neurons
+                batchSize = data.size(0)
+                s, P_ind = net.initHidden(batchSize)
+                if net.cuda:
+                    targets = targets.to(net.device)
+                    s = [item.to(net.device) for item in s]
+                    data = data.to(net.device)
 
-            if net.cuda:
-                targets = targets.to(net.device)
-                s = [item.to(net.device) for item in s]
+                # free phase
+                s, P_ind = net.forward(s, data, P_ind)
+                output = s[0].clone().detach()
+            else:
+                s = net.initState(data)
 
-            # free phase
-            s = net.forward(s)
+                if net.cuda:
+                    targets = targets.to(net.device)
+                    s = [item.to(net.device) for item in s]
 
-            # we note the last layer as s_output
-            output = s[0].clone().detach()
+                # free phase
+                s = net.forward(s)
+                output = s[0].clone().detach()
         elif jparams['lossFunction'] == 'Cross-entropy':
             # init the hidden layers
             h, y = net.initHidden(data)
@@ -795,6 +591,195 @@ def test_supervised_ep(net, jparams, test_loader, record=None):
         return test_error, test_class_record
     else:
         return test_error
+
+
+def train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
+    net.train()
+    net.epoch = epoch + 1
+    total_train = torch.zeros(1, device=net.device).squeeze()
+    correct_train = torch.zeros(1, device=net.device).squeeze()
+
+    # parameters = []
+    # for i in range(len(jparams['fcLayers'])-1):
+    #     parameters += [{'params':[net.W[i]], 'lr':lr[i]}]
+    #     parameters += [{'params':[net.bias[i]], 'lr':lr[i]}]
+    #
+    # optimizer = torch.optim.SGD(parameters, momentum=0.998)
+    # #optimizer = torch.optim.Adam(parameters)
+
+    for batch_idx, (data, targets) in enumerate(train_loader):
+        # TODO grads=0
+        optimizer.zero_grad()
+        # random signed beta: better approximate the gradient
+        net.beta = torch.sign(torch.randn(1)) * jparams['beta']
+        # init the hidden layers
+        h, y = net.initHidden(data)
+
+        if jparams['Dropout']:
+            p_distribut, y_distribut = mydropout(h, p=jparams['dropProb'], y=y)
+            del(h)
+            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
+        else:
+            p_distribut, y_distribut = None, None
+
+        if net.cuda:
+            targets = targets.to(net.device)
+            net.beta = net.beta.to(net.device)
+            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+            if jparams['Dropout']:
+                p_distribut = [item.to(net.device) for item in p_distribut]
+                y_distribut = y_distribut.to(net.device)
+
+        if jparams['errorEstimate'] == 'one-sided':
+            # free phase
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
+            heq = h.copy()
+            yeq = y.clone()
+            # nudging phase
+            if len(h) > 1:
+                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
+            # TODO calculate the gradients
+            net.computeGradientEP_softmax(h, heq, y, targets)
+
+            optimizer.step()
+            # # update the weights
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight_softmax(h, heq, y, targets, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight_softmax(h, heq, y, targets, lr)
+
+        elif jparams['errorEstimate'] == 'symmetric':
+            if len(h) <= 1:
+                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
+            # free phase
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
+            heq = h.copy()
+            yeq = y.clone()
+            # + beta
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=net.beta)
+            hplus = h.copy()
+            yplus = y.clone()
+            # -beta
+            h = heq.copy()
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=targets, beta=-net.beta)
+            hmoins = h.copy()
+            ymoins = y.clone()
+        # update and track the weights of the network
+            net.computeGradientEP_softmax(hplus, hmoins, yplus, targets, ybeta=ymoins)
+            optimizer.step()
+
+        # calculate the training error
+        prediction = torch.argmax(yeq.detach(), dim=1)
+        correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
+        total_train += targets.size(dim=0)
+
+    # calculate the train error
+    train_error = 1 - correct_train / total_train
+    return train_error
+
+
+def train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch):
+    net.train()
+    net.epoch = epoch + 1
+
+    # Stochastic mode
+    if jparams['batchSize'] == 1:
+        Y_p = torch.zeros(jparams['fcLayers'][0], device=net.device)
+
+    Xth = torch.zeros(jparams['fcLayers'][0], device=net.device)
+
+    # decide the factor
+    T_coef = 0.002
+    target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
+
+    for batch_idx, (data, targets) in enumerate(train_loader):
+        optimizer.zero_grad()
+        # random signed beta: better approximate the gradient
+        net.beta = torch.sign(torch.randn(1)) * jparams['beta']
+        # init the hidden layers
+        h, y = net.initHidden(data)
+
+        if jparams['Dropout']:
+            p_distribut, y_distribut = mydropout(h, p=jparams['dropProb'], y=y)
+            del(h)
+            h, y = net.initHidden(data, drop_visible=p_distribut[-1])
+            p_distribut = p_distribut[:-1]
+        else:
+            p_distribut, y_distribut = None, None
+
+        if net.cuda:
+            targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
+            net.beta = net.beta.to(net.device)
+            h = [item.to(net.device) for item in h] #no need to put data on the GPU as data is included in s!
+            if jparams['Dropout']:
+                p_distribut = [item.to(net.device) for item in p_distribut]
+                y_distribut = y_distribut.to(net.device)
+
+        if jparams['errorEstimate'] == 'one-sided':
+            # free phase
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
+            heq = h.copy()
+            yeq = y.clone()
+            # # define the targets by creating a new softmax function
+            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
+            # define the targets by argmax
+            unsupervised_targets, maxindex = define_unsupervised_target(yeq, jparams['nudge_N'], net.device, Xth)
+            # nudging phase
+            if len(h) > 1:
+                h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
+
+            # update the weights
+            # if jparams['Optimizer'] == 'Adam':
+            #     net.Adam_updateWeight_softmax(h, heq, y, unsupervised_targets, lr, epoch=net.epoch)
+            # else:
+            #     net.updateWeight_softmax(h, heq, y, unsupervised_targets, lr)
+            net.computeGradientEP_softmax(h, heq, y, unsupervised_targets)
+            optimizer.step()
+
+        elif jparams['errorEstimate'] == 'symmetric':
+            if len(h) <= 1:
+                raise ValueError("Symmetric errorEstimate will only be used for more than 1 hidden layer " "but got {} hidden layer".format(len(h)))
+            # free phase
+            h, y = net.forward_softmax(h, p_distribut, y_distribut)
+            heq = h.copy()
+            yeq = y.clone()
+            # # define the unsupervised targets
+            # unsupervised_targets = F.softmax(yeq/T_coef, dim=1)
+            # define the unsupervised targets by argmax
+            unsupervised_targets, maxindex = define_unsupervised_target(yeq, jparams['nudge_N'], net.device, Xth)
+            # + beta
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=net.beta)
+            hplus = h.copy()
+            yplus = y.clone()
+            # -beta
+            h = heq.copy()
+            h, y = net.forward_softmax(h, p_distribut, y_distribut, target=unsupervised_targets, beta=-net.beta)
+            hmoins = h.copy()
+            ymoins = y.clone()
+        # update and track the weights of the network
+        #     if jparams['Optimizer'] == 'Adam':
+        #         net.Adam_updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins, epoch=net.epoch)
+        #     else:
+        #         net.updateWeight_softmax(hplus, hmoins, yplus, unsupervised_targets, lr, ybeta=ymoins)
+            net.computeGradientEP_softmax(hplus, hmoins, yplus, unsupervised_targets, ybeta=ymoins)
+            optimizer.step()
+        # calculate the Homeostasis
+        # nudge_sign = torch.sign(unsupervised_targets-yeq)
+        # A = torch.max(nudge_sign, torch.zeros(nudge_sign.size(), device=net.device))
+
+        # if args.batchSize == 1:
+        #     Y_p = (1 - args.eta) * Y_p + args.eta * A[0]
+        #     Xth += net.gamma * (Y_p - target_activity)
+        # else:
+        #     Xth += net.gamma * (torch.mean(A, axis=0) - target_activity)
+        if jparams['batchSize'] == 1:
+            Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * unsupervised_targets[0]
+            Xth += net.gamma * (Y_p - target_activity)
+        else:
+            Xth += net.gamma * (torch.mean(unsupervised_targets, axis=0) - target_activity)
+
+    return Xth
 
 
 def initDataframe(path, method='supervised', dataframe_to_init='results.csv'):
