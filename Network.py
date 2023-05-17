@@ -148,6 +148,7 @@ class MlpEP(jit.ScriptModule):
         self.W_mask = [1, 1]
         self.rho = rho
         self.rhop = rhop
+        self.nudge_N = jparams['nudge_N']
         # define the device
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -213,11 +214,13 @@ class MlpEP(jit.ScriptModule):
     @jit.script_method
     def stepper_hidden(self, h:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]], y_distribut:Optional[torch.Tensor],
                        target:Optional[torch.Tensor]=None,
-                          beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor]:
+                          beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
 
-        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)*self.nudge_N
+        rho_y = self.rho(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0])
         if y_distribut is not None:
             y = y_distribut*y
+            rho_y = y_distribut * rho_y
 
         if len(h) > 1:
             dhdt=[]
@@ -239,27 +242,29 @@ class MlpEP(jit.ScriptModule):
                 if self.clamped:
                     h[layer] = h[layer].clamp(0, 1)
 
-        return h, y
+        return h, y, rho_y
 
     @jit.script_method
     def forward_softmax(self, h:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]]=None,y_distribut:Optional[torch.Tensor]=None,
-                        beta:Optional[float]=None, target:Optional[torch.Tensor]=None) -> Tuple[List[torch.Tensor], torch.Tensor]:
+                        beta:Optional[float]=None, target:Optional[torch.Tensor]=None) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
 
         T, Kmax = self.T, self.Kmax
 
-        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)*self.nudge_N
+        rho_y = self.rho(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0])
         if y_distribut is not None:
             y = y_distribut*y
+            rho_y = y_distribut*rho_y
 
         with torch.no_grad():
             if beta is None and target is None:
                 if len(h) > 1:
                     for t in range(T):
-                        h, y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
+                        h, y, rho_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
             else:
                 for t in range(Kmax):
-                    h, y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
-        return h, y
+                    h, y, rho_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
+        return h, y, rho_y
 
     @jit.script_method
     def stepper_c_ep(self, s:List[torch.Tensor], p_distribut: Optional[List[torch.Tensor]], target:Optional[torch.Tensor]=None,
@@ -286,36 +291,6 @@ class MlpEP(jit.ScriptModule):
                 s[layer] = s[layer].clamp(0, 1)
 
         return s
-
-    # @jit.script_method
-    # def dropout_stepper(self, s:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]], target:Optional[torch.Tensor]=None, beta:Optional[float]=None):
-    #     '''
-    #     stepper function for the network
-    #     '''
-    #
-    #     dsdt = []
-    #
-    #     dsdt.append(-s[0] + (rhop(s[0]) * (torch.mm(rho(s[1]), self.W[0]) + self.bias[0])))
-    #
-    #     if target is not None and beta is not None:
-    #         dsdt[0] = dsdt[0] + beta * (target - s[0])
-    #
-    #     for layer in range(1, len(s) - 1):  # start at the first hidden layer and then to the before last hidden layer
-    #         dsdt.append(-s[layer] + rhop(s[layer]) * (
-    #                     torch.mm(rho(s[layer + 1]), self.W[layer]) + self.bias[layer] + torch.mm(rho(s[layer - 1]),
-    #                                                                                              self.W[layer - 1].T)))
-    #
-    #     for (layer, dsdt_item) in enumerate(dsdt):
-    #         if p_distribut is not None:
-    #             s[layer] = p_distribut[layer]*(s[layer] + self.dt * dsdt_item)
-    #         else:
-    #             s[layer] = s[layer] + self.dt * dsdt_item
-    #
-    #         # s[0] = s[0].clamp(0, 1)
-    #         if self.clamped:
-    #             s[layer] = s[layer].clamp(0, 1)
-    #
-    #     return s
 
     @jit.script_method
     def forward(self, s:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]]=None, beta:Optional[float]=None, target:Optional[torch.Tensor]=None,
@@ -420,7 +395,6 @@ class MlpEP(jit.ScriptModule):
     def deleteBias(self):
         nn.init.zeros_(self.bias[0])
 
-
     def initState(self, data, drop_visible=None):
         '''
         Init the state of the network
@@ -490,9 +464,7 @@ class Classlayer(nn.Module):
     def forward(self, x):
         x = self.rho(self.class_layer(x), self.activation)
         return x
-
     # class Dropout(nn.Module):
-
 
 
 class ConvEP(nn.Module):
@@ -610,7 +582,7 @@ class ConvEP(nn.Module):
         self.device = device
         self = self.to(device)
 
-    def stepper_p_conv(self, s, data, P_ind, target=None, beta=0, return_derivatives=False):
+    def stepper_p_conv(self, s, data, P_ind, p_distribut=None, target=None, beta=0, return_derivatives=False):
         '''
         stepper function for prototypical convolutional model of EP
         '''
@@ -659,6 +631,8 @@ class ConvEP(nn.Module):
 
         for i in range(len(s)):
             s[i] = s[i] + self.dt*dsdt[i]
+            if p_distribut is not None:
+                s[i] = p_distribut[i]*s[i]
 
         if return_derivatives:
             return s, P_ind, dsdt
@@ -666,7 +640,7 @@ class ConvEP(nn.Module):
             del dsdt
             return s, P_ind
 
-    def forward(self, s, data, P_ind, beta=0, target=None, tracking=False):
+    def forward(self, s, data, P_ind, p_distribut=None, beta=0, target=None, tracking=False):
         # TODO why rename the self.variable at the beginning?
         T, Kmax = self.T, self.Kmax
         n_track = 9
@@ -678,7 +652,7 @@ class ConvEP(nn.Module):
             if beta == 0:
                 # first phase
                 for T in range(T):
-                    s, P_ind = self.stepper_p_conv(s, data, P_ind)
+                    s, P_ind = self.stepper_p_conv(s, data, P_ind, p_distribut)
                     if tracking:
                         for k in range(n_track):
                             m[k].append(s[0][k][2*k].item())
@@ -688,7 +662,7 @@ class ConvEP(nn.Module):
             else:
                 # nudging phase
                 for K in range(Kmax):
-                    s, P_ind = self.stepper_p_conv(s, data, P_ind, target=target, beta=beta)
+                    s, P_ind = self.stepper_p_conv(s, data, P_ind, p_distribut, target=target, beta=beta)
                     if tracking:
                         for k in range(n_track):
                             m[k].append(s[0][k][2 * k].item())
@@ -749,11 +723,13 @@ class ConvEP(nn.Module):
             param.weight.grad = -gradW_conv[i]
             param.bias.grad = -gradBias_conv[i]
 
+
+
     def initHidden(self, batch_size):
         s = []
         P_ind = []
         for i in range(self.fc_number):
-            s.append(torch.zeros(batch_size, self.fcLayers[i], requires_grad=False)) # why we requires grad ? for comparison with BPTT?
+            s.append(torch.zeros(batch_size, self.fcLayers[i], requires_grad=False))  # why we requires grad ? for comparison with BPTT?
             # inds.append(None)
         for i in range(self.conv_number):
             s.append(torch.zeros(batch_size, self.C_list[i], self.size_convpool_list[i], self.size_convpool_list[i],
