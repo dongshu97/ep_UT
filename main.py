@@ -304,7 +304,11 @@ if __name__ == '__main__':
         DATAFRAME = initDataframe(BASE_PATH, method='supervised')
 
         # save the initial network
-        torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
+        if jparams['convNet']:
+            torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
+        else:
+            with open(BASE_PATH + prefix + 'model_initial.pt', 'wb') as f:
+                torch.jit.save(net, f)
 
         train_error_list = []
         test_error_list = []
@@ -359,8 +363,11 @@ if __name__ == '__main__':
         Xth_dataframe = initXthframe(BASE_PATH, 'Xth_norm.csv')
 
         # save the initial network
-        with open(BASE_PATH + prefix + 'model_initial.pt', 'wb') as f:
-            torch.jit.save(net, f)
+        if jparams['convNet']:
+            torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
+        else:
+            with open(BASE_PATH + prefix + 'model_initial.pt', 'wb') as f:
+                torch.jit.save(net, f)
 
         #net.save(BASE_PATH + prefix+'model_entire.pt')
 
@@ -395,8 +402,11 @@ if __name__ == '__main__':
             # torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict.pt')
 
             # save the entire model
-            with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
-                torch.jit.save(net, f)
+            if jparams['convNet'] == 1:
+                torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_entire.pt')
+            else:
+                with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
+                    torch.jit.save(net, f)
 
             Xth_record.append(torch.norm(Xth).item())
             Xth_dataframe = updateXthframe(BASE_PATH, Xth_dataframe, Xth_record)

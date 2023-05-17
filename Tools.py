@@ -24,24 +24,16 @@ def classify(net, jparams, class_loader):
 
     for batch_idx, (data, targets) in enumerate(class_loader):
 
-        # initiation of s
-        s = net.initState(data)
-
         if net.cuda:
-            targets = targets.to(net.device)#no need to put data on the GPU as data is included in s!
-            for i in range(len(s)):
-                s[i] = s[i].to(net.device)
+            targets = targets.to(net.device)
 
-        # free phase
-        s = net.forward(s)
-
-        #print('The average norm of output neurons is :', torch.norm(torch.mean(s[0], axis=0)))
+        output = inference_EP(net, jparams, data)
 
         # record all the output values
         if batch_idx == 0:
-            result_output = s[0].detach()
+            result_output = output
         else:
-            result_output = torch.cat((result_output, s[0].detach()), 0)
+            result_output = torch.cat((result_output, output), 0)
 
         # record all the class sent
         if batch_idx == 0:
@@ -67,67 +59,6 @@ def classify(net, jparams, class_loader):
     unclassified += max0_indice.size(0)
 
     return response, max0_indice
-
-# def classify(net, jparams, class_loader):
-#
-#
-#     net.eval()
-#     class_moyenne = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
-#     batch_num=0
-#
-#     for batch_idx, (data, targets) in enumerate(class_loader):
-#
-#         # initiation of s
-#         s = net.initState(data)
-#
-#         if net.cuda:
-#             targets = targets.to(net.device)#no need to put data on the GPU as data is included in s!
-#             for i in range(len(s)):
-#                 s[i] = s[i].to(net.device)
-#
-#         # free phase
-#         s = net.forward(s)
-#         result_output = s[0].detach()
-#         class_vector = targets
-#
-#         # calculate each class_moyenne
-#         class_moyenne_batch = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
-#         for i in range(jparams['n_class']):
-#             indice = (class_vector == i).nonzero(as_tuple=True)[0]
-#             result_single = result_output[indice, :]
-#             class_moyenne_batch[i, :] = torch.mean(result_single, axis=0)
-#         class_moyenne += class_moyenne_batch
-#         batch_num += 1
-#         # # record all the output values
-#         # if batch_idx == 0:
-#         #     result_output = s[0].detach()
-#         # else:
-#         #     result_output = torch.cat((result_output, s[0].detach()), 0)
-#         #
-#         # # record all the class sent
-#         # if batch_idx == 0:
-#         #     class_vector = targets
-#         # else:
-#         #     class_vector = torch.cat((class_vector, targets), 0)
-#
-#     ##################### classifier one2one ########################
-#
-#     class_moyenne = class_moyenne/batch_num
-#
-#     for i in range(jparams['n_class']):
-#         indice = (class_vector == i).nonzero(as_tuple=True)[0]
-#         result_single = result_output[indice, :]
-#         class_moyenne[i, :] = torch.mean(result_single, axis=0)
-#
-#     # for the unclassified neurons, we kick them out from the responses
-#     unclassified = 0
-#     response = torch.argmax(class_moyenne, 0)
-#     # TODO to verify the difference between torch.max(output) and torch.max(class_moyenne)
-#     max0_indice = (torch.max(class_moyenne, 0).values == 0).nonzero(as_tuple=True)[0]
-#     response[max0_indice] = -1
-#     unclassified += max0_indice.size(0)
-#
-#     return response, max0_indice
 
 
 def classify_network(net, class_net, jparams, layer_loader):
@@ -155,18 +86,10 @@ def classify_network(net, class_net, jparams, layer_loader):
     for batch_idx, (data, targets) in enumerate(layer_loader):
         optimizer.zero_grad()
 
-        # initiation of s
-        s = net.initState(data)
-
         if net.cuda:
             targets = targets.to(net.device)
-            for i in range(len(s)):
-                s[i] = s[i].to(net.device)
 
-        # free phase
-        s = net.forward(s)
-        # forward propagation in classification layer
-        x = s[0].clone()
+        x = inference_EP(net, jparams, data)
         output = class_net.forward(x)
         # calculate the loss
 
@@ -199,17 +122,14 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
 
     for batch_idx, (data, targets) in enumerate(test_loader):
         total_batch += 1
-        s = net.initState(data)
-        if net.cuda:
-            targets = targets.to(net.device)
-            s = [item.to(net.device) for item in s]
-
         # record the total test
         total_test += targets.size()[0]
-        # free phase
-        s = net.forward(s)
+
+        if net.cuda:
+            targets = targets.to(net.device)
+
         # forward propagation in classification layer
-        x = s[0].clone()
+        x = inference_EP(net, jparams, data)
         output = class_net.forward(x)
         # calculate the loss
         if jparams['class_activation'] == 'softmax':
@@ -505,6 +425,43 @@ def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
         return Xth
 
 
+def inference_EP(net, jparams, data):
+
+    if jparams['lossFunction'] == 'MSE':
+        if jparams['convNet'] == 1:
+            # initiate the neurons
+            batchSize = data.size(0)
+            s, P_ind = net.initHidden(batchSize)
+            if net.cuda:
+                s = [item.to(net.device) for item in s]
+                data = data.to(net.device)
+
+            # free phase
+            s, P_ind = net.forward(s, data, P_ind)
+        else:
+            s = net.initState(data)
+            # TODO modify the weight for the inference
+            if net.cuda:
+                s = [item.to(net.device) for item in s]
+
+            # free phase
+            s = net.forward(s)
+
+        # we note the last layer as s_output
+        output = s[0].clone().detach()
+
+    elif jparams['lossFunction'] == 'Cross-entropy':
+        # init the hidden layers
+        h, y = net.initHidden(data)
+        if net.cuda:
+            h = [item.to(net.device) for item in h]
+        # free phase
+        h, y, rho_y = net.forward_softmax(h)
+        output = y.clone().detach()
+
+    return output
+
+
 def train_supervised_ep(net, jparams, train_loader, optimizer, epoch):
     net.train()
     net.epoch = epoch + 1
@@ -559,41 +516,10 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
         # record the total test
         total_test += targets.size()[0]
 
-        if jparams['lossFunction'] == 'MSE':
-            if jparams['convNet'] == 1:
-                # initiate the neurons
-                batchSize = data.size(0)
-                s, P_ind = net.initHidden(batchSize)
-                if net.cuda:
-                    targets = targets.to(net.device)
-                    s = [item.to(net.device) for item in s]
-                    data = data.to(net.device)
+        if net.cuda:
+            targets = targets.to(net.device)
 
-                # free phase
-                s, P_ind = net.forward(s, data, P_ind)
-                output = s[0].clone().detach()
-            else:
-                s = net.initState(data)
-
-                if net.cuda:
-                    targets = targets.to(net.device)
-                    s = [item.to(net.device) for item in s]
-
-                # free phase
-                s = net.forward(s)
-                output = s[0].clone().detach()
-        elif jparams['lossFunction'] == 'Cross-entropy':
-            # init the hidden layers
-            h, y = net.initHidden(data)
-
-            if net.cuda:
-                targets = targets.to(net.device)  # targets here were not encoded by one-hot coding
-                h = [item.to(net.device) for item in h]  # no need to put data on the GPU as data is included in s!
-
-            # forward
-            h, y, rho_y = net.forward_softmax(h)
-
-            output = y.clone().detach()
+        output = inference_EP(net, jparams, data)
 
         '''average value'''
         classvalue = torch.zeros(output.size(0), jparams['n_class'], device=net.device)
@@ -654,39 +580,11 @@ def test_supervised_ep(net, jparams, test_loader, record=None):
     for batch_idx, (data, targets) in enumerate(test_loader):
         # record the total test
         total_test += targets.size()[0]
-        if jparams['lossFunction'] == 'MSE':
-            if jparams['convNet'] == 1:
-                # initiate the neurons
-                batchSize = data.size(0)
-                s, P_ind = net.initHidden(batchSize)
-                if net.cuda:
-                    targets = targets.to(net.device)
-                    s = [item.to(net.device) for item in s]
-                    data = data.to(net.device)
 
-                # free phase
-                s, P_ind = net.forward(s, data, P_ind)
-            else:
-                s = net.initState(data)
-                # TODO modify the weight for the inference
-                if net.cuda:
-                    targets = targets.to(net.device)
-                    s = [item.to(net.device) for item in s]
+        if net.cuda:
+            targets = targets.to(net.device)
 
-                # free phase
-                s = net.forward(s)
-
-            # we note the last layer as s_output
-            output = s[0].clone().detach()
-        elif jparams['lossFunction'] == 'Cross-entropy':
-            # init the hidden layers
-            h, y = net.initHidden(data)
-            if net.cuda:
-                targets = targets.to(net.device)
-                h = [item.to(net.device) for item in h]
-            # free phase
-            h, y, rho_y = net.forward_softmax(h)
-            output = y.clone().detach()
+        output = inference_EP(net, jparams, data)
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()
 
@@ -846,7 +744,6 @@ def createPath(args=None):
     # BASE_PATH += prefix + 'BaSize-' + str(args.batchSize)
 
     BASE_PATH += prefix + datetime.datetime.now().strftime("%Y-%m-%d")
-
 
     if not os.path.exists(BASE_PATH):
         os.makedirs(BASE_PATH)

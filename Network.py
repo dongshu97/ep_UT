@@ -485,6 +485,7 @@ class ConvEP(nn.Module):
         self.errorEstimate = jparams['errorEstimate']
         self.rho = rho
         self.rhop = rhop
+        self.gamma = jparams['gamma']
 
         if jparams['dataset'] == 'mnist':
             input_size = 28

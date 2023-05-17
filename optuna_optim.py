@@ -147,7 +147,7 @@ def jparamsCreate(pre_config, trial):
 
         jparams["beta"] = trial.suggest_float("beta", 0.05, 0.5)
         lr = []
-        for i in range(len(jparams["fcLayers"])-1):
+        for i in range(jparams["numLayers"]-1):
             lr_i = trial.suggest_float("lr"+str(i), 1e-7, 0.1, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
@@ -155,7 +155,7 @@ def jparamsCreate(pre_config, trial):
         jparams['lr'].reverse()
 
         jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
-        if len(jparams["fcLayers"]) == 2:
+        if jparams["numLayers"] <= 2:
             jparams["errorEstimate"] = 'one-sided'
         else:
             jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
@@ -163,8 +163,8 @@ def jparamsCreate(pre_config, trial):
         if jparams["Dropout"]:
             dropProb = []
             dropProb.append(0.2)
-            for i in range(1, len(jparams["fcLayers"])):
-                if jparams["fcLayers"][i] == jparams["n_class"]:
+            for i in range(1, jparams["numLayers"]):
+                if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"]-1:
                     drop_i = 0
                 else:
                     drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
@@ -172,18 +172,9 @@ def jparamsCreate(pre_config, trial):
             jparams["dropProb"] = dropProb.copy()
             jparams["dropProb"].reverse()
 
-        # if jparams["Dropout"]:
-        #     dropProb = []
-        #     for i in range(len(jparams["fcLayers"]) - 1):
-        #         drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-        #         # to verify whether we need to change the name of drop_i
-        #         dropProb.append(drop_i)
-        #     jparams["dropProb"] = dropProb.copy()
-        #     jparams["dropProb"].reverse()
-
         if jparams["Prune"] == "Initiation":
             pruneAmount = []
-            for i in range(len(jparams["fcLayers"]) - 1):
+            for i in range(jparams["numLayers"] - 1):
                 prune_i = trial.suggest_float("prune" + str(i), 0.01, 1, log=True)
                 # to verify whether we need to change the name of drop_i
                 pruneAmount.append(prune_i)
@@ -200,7 +191,7 @@ def jparamsCreate(pre_config, trial):
         jparams["nudge_N"] = None
         jparams["beta"] = trial.suggest_float("beta", 0.05, 0.5)
         lr = []
-        for i in range(len(jparams["fcLayers"]) - 1):
+        for i in range(jparams["numLayers"] - 1):
             lr_i = trial.suggest_float("lr" + str(i), 1e-6, 1e-2, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
@@ -208,51 +199,20 @@ def jparamsCreate(pre_config, trial):
         jparams["lr"].reverse()
 
         jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
-        if len(jparams["fcLayers"]) == 2:
+        if jparams["numLayers"] == 2:
             jparams["errorEstimate"] = 'one-sided'
         else:
             jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
             # jparams["lossFunction"] = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
 
-        # TODO add the dropout parameters
-        # if jparams["Dropout"]:
-        #     dropProb = []
-        #     for i in range(len(jparams["fcLayers"]) - 1):
-        #         if jparams["fcLayers"][i+1] == jparams["n_class"]:
-        #             drop_i = 0
-        #         else:
-        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-        #         # to verify whether we need to change the name of drop_i
-        #         dropProb.append(drop_i)
-        #     jparams["dropProb"] = dropProb.copy()
-        #     jparams["dropProb"].reverse()
-        #
-        # if jparams["Dropout"]:
-        #     dropProb = []
-        #     dropProb.append(0.2)
-        #     for i in range(1, len(jparams["fcLayers"])):
-        #         if jparams["fcLayers"][i] == jparams["n_class"]:
-        #             drop_i = 0
-        #         else:
-        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-        #         dropProb.append(drop_i)
-        #     jparams["dropProb"] = dropProb.copy()
         if jparams["Dropout"]:
             jparams["dropProb"] = [0.2, 0.5, 0]
             jparams["dropProb"].reverse()
 
-        # if jparams["Prune"] == "Initiation":
-        #     pruneAmount = []
-        #     for i in range(len(jparams["fcLayers"]) - 1):
-        #         prune_i = trial.suggest_float("prune" + str(i), 0, 1, log=True)
-        #         # to verify whether we need to change the name of drop_i
-        #         pruneAmount.append(prune_i)
-        #     jparams["pruneAmount"] = pruneAmount.copy()
-        #     jparams["pruneAmount"].reverse()
     elif jparams["action"] == 'semi-supervised_ep':
 
         pre_lr = []
-        for i in range(len(jparams["fcLayers"]) - 1):
+        for i in range(jparams["numLayers"] - 1):
             pre_lr_i = trial.suggest_float("lr" + str(i), 1e-5, 1, log=True)
             # to verify whether we need to change the name of lr_i
             pre_lr.append(pre_lr_i)
@@ -265,13 +225,13 @@ def jparamsCreate(pre_config, trial):
         jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
         jparams["batchSize"] = trial.suggest_int("batchSize", 10, 512)
         lr = []
-        for i in range(len(jparams["fcLayers"])-1):
+        for i in range(jparams["numLayers"]-1):
             lr_i = trial.suggest_float("lr"+str(i), 1e-7, 0.1, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
         jparams["lr"] = lr.copy()
         jparams["lr"].reverse()
-        if len(jparams["fcLayers"]) == 2:
+        if jparams["numLayers"] == 2:
             jparams["errorEstimate"] = 'one-sided'
         else:
             jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
@@ -279,12 +239,12 @@ def jparamsCreate(pre_config, trial):
 
         if jparams["Dropout"]:
             dropProb = []
-            for i in range(len(jparams["fcLayers"]) - 1):
-                if jparams["fcLayers"][i+1] == jparams["n_class"]:
+            dropProb.append(0.2)
+            for i in range(1, jparams["numLayers"]):
+                if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"] - 1:
                     drop_i = 0
                 else:
                     drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                # to verify whether we need to change the name of drop_i
                 dropProb.append(drop_i)
             jparams["dropProb"] = dropProb.copy()
             jparams["dropProb"].reverse()
@@ -423,7 +383,10 @@ def objective(trial, pre_config):
             train_loader,  validation_loader, class_loader, layer_loader = returnMNIST(jparams)
 
     # create the model
-    net = torch.jit.script(MlpEP(jparams, rho, rhop))
+    if jparams['convNet']:
+        net = ConvEP(jparams, rho, rhop)
+    else:
+        net = torch.jit.script(MlpEP(jparams, rho, rhop))
     # TODO to include the CNN version
     if jparams['pre_epochs'] > 0:
         initial_lr = jparams['pre_lr']
