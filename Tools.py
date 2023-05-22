@@ -227,7 +227,12 @@ def Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             correct_train += (prediction == torch.argmax(targets, dim=1)).sum().float()
             total_train += targets.size(dim=0)
         else:
-            target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
+            if jparams['Dropout']:
+                target_activity = jparams['nudge_N'] / (jparams['fcLayers'][0] * (
+                        1 - jparams['dropProb'][0]))  # dropout influences the target activity
+            else:
+                target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
+
             if jparams['batchSize'] == 1:
                 Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
                 Xth += net.gamma * (Y_p - target_activity)
@@ -307,21 +312,15 @@ def Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             if jparams['Dropout']:
                 target_activity = jparams['nudge_N'] / (jparams['fcLayers'][0] * (
                             1 - jparams['dropProb'][0]))  # dropout influences the target activity
-                if jparams['batchSize'] == 1:
-                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
-
-                    Xth += net.gamma * (Y_p - target_activity) * p_distribut[0]
-                else:
-                    Xth += net.gamma * ((torch.sum(targets, axis=0) / torch.sum(p_distribut[0],
-                                                                                             axis=0)) - target_activity)
-
             else:
                 target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
-                if jparams['batchSize'] == 1:
-                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
-                    Xth += net.gamma * (Y_p - target_activity)
-                else:
-                    Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
+
+            if jparams['batchSize'] == 1:
+                Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
+                Xth += net.gamma * (Y_p - target_activity)
+            else:
+                Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
+
     if Xth is None:
         return 1 - correct_train / total_train
     else:
@@ -404,21 +403,14 @@ def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
             if jparams['Dropout']:
                 target_activity = jparams['nudge_N'] / (jparams['fcLayers'][0] * (
                         1 - jparams['dropProb'][0]))  # dropout influences the target activity
-                if jparams['batchSize'] == 1:
-                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
-
-                    Xth += net.gamma * (Y_p - target_activity) * p_distribut[0]
-                else:
-                    Xth += net.gamma * ((torch.sum(targets, axis=0) / torch.sum(p_distribut[0],
-                                                                                             axis=0)) - target_activity)
-
             else:
                 target_activity = jparams['nudge_N'] / jparams['fcLayers'][0]
-                if jparams['batchSize'] == 1:
-                    Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
-                    Xth += net.gamma * (Y_p - target_activity)
-                else:
-                    Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
+
+            if jparams['batchSize'] == 1:
+                Y_p = (1 - jparams['eta']) * Y_p + jparams['eta'] * targets[0]
+                Xth += net.gamma * (Y_p - target_activity)
+            else:
+                Xth += net.gamma * (torch.mean(targets, axis=0) - target_activity)
     if Xth is None:
         return 1 - correct_train / total_train
     else:
