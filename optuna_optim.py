@@ -140,37 +140,41 @@ def jparamsCreate(pre_config, trial):
             jparams["eta"] = None
         else:
             jparams["batchSize"] = 1,
-            jparams["eta"] = trial.suggest_float("eta", 0.001, 1, log=True)
+            jparams["eta"] = trial.suggest_float("eta", 0.01, 1, log=True)
 
-        jparams["gamma"] = trial.suggest_float("gamma", 0.001, 1, log=True)
+        jparams["gamma"] = trial.suggest_float("gamma", 0.01, 1, log=True)
         jparams["nudge_N"] = trial.suggest_int("nudge_N", 1, jparams["nudge_max"])
 
-        jparams["beta"] = trial.suggest_float("beta", 0.05, 0.5)
+        jparams["beta"] = trial.suggest_float("beta", 0.05, 0.8)
         lr = []
         for i in range(jparams["numLayers"]-1):
-            lr_i = trial.suggest_float("lr"+str(i), 1e-7, 0.1, log=True)
+            lr_i = trial.suggest_float("lr"+str(i), 1e-3, 1, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
         jparams["lr"] = lr.copy()
         jparams['lr'].reverse()
 
-        jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
-        if jparams["numLayers"] <= 2:
-            jparams["errorEstimate"] = 'one-sided'
-        else:
-            jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
+        jparams["Optimizer"] = 'SGD'
+        #jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
 
-        if jparams["Dropout"]:
-            dropProb = []
-            dropProb.append(0.2)
-            for i in range(1, jparams["numLayers"]):
-                if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"]-1:
-                    drop_i = 0
-                else:
-                    drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                dropProb.append(drop_i)
-            jparams["dropProb"] = dropProb.copy()
-            jparams["dropProb"].reverse()
+        # if jparams["numLayers"] <= 2:
+        #     jparams["errorEstimate"] = 'one-sided'
+        # else:
+        #     jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
+
+        # if jparams["Dropout"]:
+        #     dropProb = []
+        #     dropProb.append(0.2)
+        #     for i in range(1, jparams["numLayers"]):
+        #         if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"]-1:
+        #             drop_i = 0
+        #         else:
+        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
+        #         dropProb.append(drop_i)
+        #     jparams["dropProb"] = dropProb.copy()
+        #     jparams["dropProb"].reverse()
+        jparams["dropProb"] = [0.2, 0.44]
+        jparams["dropProb"].reverse()
 
         if jparams["Prune"] == "Initiation":
             pruneAmount = []

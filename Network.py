@@ -76,7 +76,7 @@ def smoothLabels(labels, smooth_factor, nudge_N):
     if 0 <= smooth_factor <= 1:
         # label smoothing
         labels *= 1 - smooth_factor
-        labels += (nudge_N*smooth_factor) / labels.shape[1]
+        labels += (nudge_N*smooth_factor) / (labels.shape[1]-nudge_N)
     else:
         raise ValueError('Invalid label smoothing factor: ' + str(smooth_factor))
     return labels
