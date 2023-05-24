@@ -7,6 +7,8 @@ import torchvision
 # import argparse
 import json
 import os
+import logging
+import sys
 from pathlib import Path
 from Data import *
 from Network import *
@@ -173,7 +175,7 @@ def jparamsCreate(pre_config, trial):
         #         dropProb.append(drop_i)
         #     jparams["dropProb"] = dropProb.copy()
         #     jparams["dropProb"].reverse()
-        jparams["dropProb"] = [0.2, 0.44]
+        jparams["dropProb"] = [0.2, 0.3]
         jparams["dropProb"].reverse()
 
         if jparams["Prune"] == "Initiation":
@@ -519,7 +521,31 @@ if __name__=='__main__':
     # create the filepath for saving the optuna trails
     filePath = BASE_PATH + prefix + "test.csv"
     study_name = str(time.asctime())
-    study = optuna.create_study(study_name=study_name, storage='sqlite:///example.db')
+    study = optuna.create_study(direction="minimize", study_name=study_name, storage='sqlite:///example.db')
+
+    study.enqueue_trial(
+        {
+            "batchSize": 64,
+            "gamma": 0.8,
+            "nudge_N": 1,
+            "beta": 0.5,
+            "lr0": 0.6,
+            # "lr1" : 0.02,
+        }
+    )
+
+    study.enqueue_trial(
+        {
+            "batchSize": 128,
+            "gamma": 0.25,
+            "nudge_N": 1,
+            "beta": 0.5,
+            "lr0": 0.4,
+            #"lr1" : 0.02,
+        }
+    )
+
+    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     study.optimize(lambda trial: objective(trial, pre_config), n_trials=200)
 
     trails = study.get_trials()
