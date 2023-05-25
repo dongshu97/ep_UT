@@ -525,11 +525,11 @@ if __name__=='__main__':
 
     study.enqueue_trial(
         {
-            "batchSize": 64,
-            "gamma": 0.8,
-            "nudge_N": 1,
-            "beta": 0.5,
-            "lr0": 0.6,
+            "batchSize": 140,
+            "gamma": 0.4,
+            "nudge_N": 7,
+            "beta": 0.075,
+            "lr0": 0.01,
             # "lr1" : 0.02,
         }
     )
@@ -537,10 +537,10 @@ if __name__=='__main__':
     study.enqueue_trial(
         {
             "batchSize": 128,
-            "gamma": 0.25,
-            "nudge_N": 1,
-            "beta": 0.5,
-            "lr0": 0.4,
+            "gamma": 0.5,
+            "nudge_N": 5,
+            "beta": 0.2,
+            "lr0": 0.015,
             #"lr1" : 0.02,
         }
     )
