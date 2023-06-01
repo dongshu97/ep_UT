@@ -26,8 +26,17 @@ parser.add_argument(
     '--json_path',
     type=str,
     default=r'.',
+    #default=r'D:\Results_data\Visible dropout perceptron\784-10',
     help='path of json configuration'
 )
+parser.add_argument(
+    '--trained_path',
+    type=str,
+    default=r'.',
+    #default=r'D:\Results_data\Visible dropout perceptron\784-10\S-1',
+    help='path of model_dict_state_file'
+)
+
 args = parser.parse_args()
 
 # use json to load the configuration parameters
@@ -59,7 +68,8 @@ if jparams['dataset'] == 'mnist':
         transforms = [torchvision.transforms.ToTensor(), ReshapeTransform((-1,))]
 
     # Download the MNIST dataset
-    if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' or jparams['action'] == 'test':
+    if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' \
+            or jparams['action'] == 'test' or jparams['action'] == 'visu':
         train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                transform=torchvision.transforms.Compose(transforms))
         # # we create the dataset mixed with unlabeled and labeled data
@@ -120,16 +130,8 @@ if jparams['dataset'] == 'mnist':
                                                target_transform=ReshapeTransformTarget(10))
     else:
         class_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
-    #
-    # class_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
-    #                          transform=torchvision.transforms.Compose(transforms))
-
         layer_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms),
                                  target_transform=ReshapeTransformTarget(10))
-
-    # layer_set = ClassDataset(root='./MNIST_class_seed', test_set=test_set, seed=seed,
-    #                          transform=torchvision.transforms.Compose(transforms),
-    #                              target_transform=ReshapeTransformTarget(10))
 
     if jparams['device'] >= 0:
         class_loader = torch.utils.data.DataLoader(class_set, batch_size=1200, shuffle=True)
@@ -491,46 +493,20 @@ if __name__ == '__main__':
                 torch.jit.save(net, f)
 
     elif jparams['action'] == 'visu':
-        # # the hyper-parameters "analysis_preTrain" should be set at 1 at the beginning
-        del(jparams)
-        # load the json file
-        with open(r'D:\Results_data\EP_batch_optimized_results\784-2000-N7-beta0.31-hardsigm-lr0.0159-batch139-gamma0.2-epoch100\config.json') as f:
-            jparams = json.load(f)
-        jparams['action'] = 'visu'
-        # # reverse several variables in jparams
-        jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
-        jparams['C_list'].reverse()  # we reverse also the list of channels
-        jparams['lr'].reverse()
-        jparams['display'].reverse()
-        jparams['imShape'].reverse()
-        jparams['dropProb'].reverse()
-        jparams['pruneAmount'].reverse()
-
         # load the pre-trained network
-        with open(r'D:\Results_data\EP_batch_optimized_results\784-2000-N7-beta0.31-hardsigm-lr0.0159-batch139-gamma0.2-epoch100\S-10\model_entire.pt', 'rb') as f:
+        with open(args.trained_path + prefix +'model_entire.pt', 'rb') as f:
             loaded_net = torch.jit.load(f)
 
-        net = torch.jit.script(MlpEP(jparams))
+        if jparams['convNet']:
+            net = ConvEP(jparams, rho, rhop)
+        else:
+            net = torch.jit.script(MlpEP(jparams, rho, rhop))
+
+        # TODO to change to adapt the CNN case
         net.W = loaded_net.W.copy()
         net.bias = loaded_net.bias.copy()
 
         net.eval()
-        # reset the dataset
-        classLabel_percentage = jparams['classLabel_percentage']
-        if jparams['classLabel_percentage'] == 1:
-            class_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                               transform=torchvision.transforms.Compose(transforms))
-            layer_set = train_set
-        else:
-            class_set = splitClass(x, y, classLabel_percentage, seed=seed,
-                                   transform=torchvision.transforms.Compose(transforms))
-            layer_set = splitClass(x, y, classLabel_percentage, seed=seed,
-                                   transform=torchvision.transforms.Compose(transforms),
-                                   target_transform=ReshapeTransformTarget(10))
-
-        class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
-
-        layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=jparams['test_batchSize'], shuffle=True)
 
         # one2one response
         response, max0_indice = classify(net, jparams, class_loader)
