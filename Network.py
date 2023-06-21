@@ -293,6 +293,27 @@ class MlpEP(jit.ScriptModule):
         return s
 
     @jit.script_method
+    def stepper_generate(self, s:List[torch.Tensor], target:torch.Tensor):
+        dsdt = []
+        # fix the output
+        s[0] = target.clone()
+        #dsdt.append(0.5 * (target - s[0]))
+        for layer in range(1, len(s) - 1):
+            dsdt.append(-s[layer] + self.rhop(s[layer]) * (torch.mm(self.rho(s[layer+1]), self.W[layer]) +
+                                                           self.bias[layer] + torch.mm(self.rho(s[layer-1]), self.W[layer-1].T)))
+
+        # for the input layer
+        dsdt.append(-s[-1] + (self.rhop(s[-1])) * torch.mm(self.rho(s[-2]), self.W[-1].T)) # no biases
+
+        for (layer, dsdt_item) in enumerate(dsdt):
+            s[layer + 1] = s[layer + 1] + self.dt * dsdt_item
+            s[layer + 1] = s[layer + 1].clamp(0, 1)
+            #s[layer] = s[layer] + self.dt * dsdt_item
+            #s[layer] = s[layer].clamp(0, 1)
+
+        return s
+
+    @jit.script_method
     def forward(self, s:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]]=None, beta:Optional[float]=None, target:Optional[torch.Tensor]=None,
                 ) -> List[torch.Tensor]:
 

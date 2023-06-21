@@ -1,7 +1,7 @@
 {
   "device": 0,
   "dataset": "mnist",
-  "action": "unsupervised_ep",
+  "action": "visu",
   "dt": 0.2,
   "T": 40,
   "Kmax": 15,
@@ -12,11 +12,13 @@
   "padding": 0,
   "convF": 5,
   "Fpool": 2,
-  "fcLayers": [784, 100],
+  "fcLayers": [784, 2000],
   "activation_function": "hardsigm",
   "Optimizer": "SGD",
   "errorEstimate": "one-sided",
   "lossFunction": "MSE",
+  "pre_loss": "Cross-entropy",
+  "pre_optimizer": "Adam",
   "pre_epochs": 0,
   "pre_batchSize": 32,
   "pre_lr": [0, 0],
@@ -47,6 +49,7 @@
   "analysis_preTrain": 0,
   "imWeights": 0,
   "maximum_activation": 0,
-  "imShape": [28, 28, 32, 32],
-  "display": [10, 10, 10, 10]
+  "reverseProp": 1,
+  "imShape": [28, 28],
+  "display": [5, 6]
 }

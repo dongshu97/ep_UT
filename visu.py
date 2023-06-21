@@ -29,7 +29,7 @@ def plot_imshow(x, out_nb, display, imShape, figName, path, prefix):
     fig, axes = plt.subplots(display[0], display[1])
     for i, ax in zip(range(out_nb), axes.flat):
         # TODO the weights is (n_input, n_outputs)
-        plot = ax.imshow(x[:, i].reshape(imShape[0], imShape[1]), cmap=cm.coolwarm)
+        plot = ax.imshow(x[:, i].reshape(imShape[0], imShape[1]), cmap=cm.viridis)
         #ax.axis('off')
         ax.get_xaxis().set_visible(False)
         ax.get_yaxis().set_visible(False)

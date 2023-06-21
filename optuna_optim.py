@@ -86,12 +86,12 @@ def returnMNIST(jparams):
     class_loader = torch.utils.data.DataLoader(class_set, batch_size=1000, shuffle=True)
     layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=1000, shuffle=True)
     #
-    if jparams['littleData']:
+    if jparams['littleData'] or jparams['action'] == 'semi-supervised_ep':
         targets = train_set.targets
         semi_seed = jparams['semi_seed']
         supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
                                                                           jparams['fcLayers'][0], jparams['n_class'],
-                                                                          jparams['trainLabel_number'],transform=torchvision.transforms.Compose(transforms),
+                                                                          jparams['trainLabel_number'], transform=torchvision.transforms.Compose(transforms),
                                                                           seed=semi_seed)
         supervised_loader = torch.utils.data.DataLoader(supervised_dataset, batch_size=jparams['pre_batchSize'],
                                                         shuffle=True)
@@ -131,7 +131,7 @@ def jparamsCreate(pre_config, trial):
     if jparams["dataset"] == 'mnist':
         #jparams["class_seed"] = trial.suggest_int("class_seed", 0, 42)
         jparams["class_seed"] = 34
-        if jparams["littleData"]:
+        if jparams["littleData"] or jparams['action'] == 'semi-supervised_ep':
             # jparams["semi_seed"] = trial.suggest_int("semi_seed", 0, 42)
             jparams["semi_seed"] = 13
             jparams["pre_batchSize"] = trial.suggest_int("pre_batchSize", 10, min(jparams["trainLabel_number"], 512))
@@ -217,43 +217,39 @@ def jparamsCreate(pre_config, trial):
 
     elif jparams["action"] == 'semi-supervised_ep':
 
-        pre_lr = []
-        for i in range(jparams["numLayers"] - 1):
-            pre_lr_i = trial.suggest_float("lr" + str(i), 1e-5, 1, log=True)
-            # to verify whether we need to change the name of lr_i
-            pre_lr.append(pre_lr_i)
-        jparams["pre_lr"] = pre_lr.copy()
+        # pre_lr = []
+        # for i in range(jparams["numLayers"] - 1):
+        #     pre_lr_i = trial.suggest_float("lr" + str(i), 1e-5, 1, log=True)
+        #     # to verify whether we need to change the name of lr_i
+        #     pre_lr.append(pre_lr_i)
+        # jparams["pre_lr"] = pre_lr.copy()
         jparams["pre_lr"].reverse()
-        jparams["eta"] = None
-        jparams["gamma"] = trial.suggest_float("gamma", 1e-5, 1, log=True)
-        jparams["beta"] = trial.suggest_float("beta", 0.01, 1)
+        jparams["eta"] = 0.5
+        jparams["gamma"] = 0.5
+        jparams["beta"] = 0.45
         jparams["nudge_N"] = 1
         jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
+        jparams["lossFunction"] = trial.suggest_categorical("lossFunction", ['Cross-entropy', 'MSE'])
         jparams["batchSize"] = trial.suggest_int("batchSize", 10, 512)
         lr = []
         for i in range(jparams["numLayers"]-1):
-            lr_i = trial.suggest_float("lr"+str(i), 1e-7, 0.1, log=True)
+            lr_i = trial.suggest_float("lr"+str(i), 1e-7, 1, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
         jparams["lr"] = lr.copy()
         jparams["lr"].reverse()
-        if jparams["numLayers"] == 2:
-            jparams["errorEstimate"] = 'one-sided'
-        else:
-            jparams["errorEstimate"] = trial.suggest_categorical("errorEstimate", ['one-sided', 'symmetric'])
-            # jparams["lossFunction"] = trial.suggest_categorical("lossFunction", ['MSE', 'Cross-entropy'])
 
-        if jparams["Dropout"]:
-            dropProb = []
-            dropProb.append(0.2)
-            for i in range(1, jparams["numLayers"]):
-                if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"] - 1:
-                    drop_i = 0
-                else:
-                    drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
-                dropProb.append(drop_i)
-            jparams["dropProb"] = dropProb.copy()
-            jparams["dropProb"].reverse()
+        # if jparams["Dropout"]:
+        #     dropProb = []
+        #     dropProb.append(0.2)
+        #     for i in range(1, jparams["numLayers"]):
+        #         if jparams["fcLayers"][-1] == jparams["n_class"] and i == jparams["numLayers"] - 1:
+        #             drop_i = 0
+        #         else:
+        #             drop_i = trial.suggest_float("drop" + str(i), 0.01, 1, log=True)
+        #         dropProb.append(drop_i)
+        jparams["dropProb"] = [0.2, 0.5, 0]
+        jparams["dropProb"].reverse()
 
     elif jparams["action"] == 'class_layer':
         jparams["batchSize"] = 128
@@ -318,26 +314,25 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             print("Training the model with semi-supervised ep")
         else:
             raise ValueError("supervised training data or unsupervised training data is not given ")
+
+        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['pre_lr'],
+                                                                      jparams['pre_optimizer'])
         for epoch in tqdm(range(jparams["pre_epochs"])):
-            if jparams['lossFunction'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
+            if jparams['pre_loss'] == 'MSE':
+                train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+            elif jparams['pre_loss'] == 'Cross-entropy':
+                train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
 
             validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
-            # Handle pruning based on the intermediate value.
-            trial.report(validation_error_epoch, epoch)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
 
         unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
         for epoch in tqdm(range(jparams["epochs"])):
             # supervised reminder
-            if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
+            if jparams['pre_loss'] == 'MSE':
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+            elif jparams['pre_loss'] == 'Cross-entropy':
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
                                                                      epoch)
             # unsupervised training
             if jparams['lossFunction'] == 'MSE':
@@ -345,6 +340,7 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             elif jparams['lossFunction'] == 'Cross-entropy':
                 Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             entire_test_epoch = test_supervised_ep(net, jparams, validation_loader)
+
             # Handle pruning based on the intermediate value.
             trial.report(entire_test_epoch, epoch+jparams['pre_epochs'])
             if trial.should_prune():
@@ -382,7 +378,7 @@ def objective(trial, pre_config):
         train_loader, validation_loader, class_loader, layer_loader = \
             returnYinYang(jparams['batchSize'], batchSizeTest=jparams["test_batchSize"])
     elif jparams["dataset"] == 'mnist':
-        if jparams['littleData']:
+        if jparams['littleData'] or jparams['action'] == 'semi-supervised_ep':
             train_loader, validation_loader, class_loader, layer_loader, \
             supervised_loader, unsupervised_loader = returnMNIST(jparams)
         else:
@@ -526,21 +522,27 @@ if __name__=='__main__':
     study.enqueue_trial(
         {
             "batchSize": 140,
-            "gamma": 0.4,
-            "nudge_N": 7,
-            "beta": 0.075,
-            "lr0": 0.01,
-            # "lr1" : 0.02,
+            "lossFunction": 'MSE',
+            "Optimizer": 'SGD',
+            #"gamma": 0.4,
+            #"nudge_N": 7,
+            #"beta": 0.075,
+            "lr0": 0.003,
+            "lr1": 0.003,
+
         }
     )
 
     study.enqueue_trial(
         {
             "batchSize": 128,
-            "gamma": 0.5,
-            "nudge_N": 5,
-            "beta": 0.2,
-            "lr0": 0.015,
+            "lossFunction":'Cross-entropy',
+            "Optimizer":'Adam',
+            #"gamma": 0.5,
+            #"nudge_N": 5,
+            #"beta": 0.2,
+            "lr0": 0.00001,
+            "lr1": 0.00001
             #"lr1" : 0.02,
         }
     )

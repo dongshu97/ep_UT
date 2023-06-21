@@ -17,7 +17,7 @@ from tqdm import tqdm
 from Data import *
 from Tools import *
 from Network import *
-from plotFunction import*
+from plotFunction import *
 from visu import *
 
 # TODO use argsparser to give the file path of json file
@@ -32,8 +32,8 @@ parser.add_argument(
 parser.add_argument(
     '--trained_path',
     type=str,
-    default=r'.',
-    #default=r'D:\Results_data\Visible dropout perceptron\784-10\S-1',
+    #default=r'.',
+    default=r'D:\Results_data\Visible dropout perceptron\784-2000\S-10',
     help='path of model_dict_state_file'
 )
 
@@ -222,7 +222,7 @@ if __name__ == '__main__':
     BASE_PATH, name = createPath()
 
     # we create the network and define the  parameters
-    if jparams['pre_epochs'] > 0:
+    if jparams['pre_epochs'] > 0 and jparams['action'] == 'semi-supervised_ep':
         initial_lr = jparams['pre_lr']
     else:
         initial_lr = jparams['lr']
@@ -451,11 +451,13 @@ if __name__ == '__main__':
         pretrain_error_list = []
         pretest_error_list = []
 
+        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['pre_lr'], jparams['pre_optimizer'])
+
         for epoch in tqdm(range(jparams['pre_epochs'])):
-            if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
+            if jparams['pre_loss'] == 'MSE':
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+            elif jparams['pre_loss'] == 'Cross-entropy':
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
             pretest_error_epoch = test_supervised_ep(net, jparams, test_loader)
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
@@ -473,13 +475,13 @@ if __name__ == '__main__':
 
         for epoch in tqdm(range(jparams['epochs'])):
             # supervised reminder
-            if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
+            if jparams['pre_loss'] == 'MSE':
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+            elif jparams['pre_loss'] == 'Cross-entropy':
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
                                                                      epoch)
             supervised_test_epoch = test_supervised_ep(net, jparams, test_loader)
-            # unsupervised training
+            # unsupervised training --> consider only MSE
             if jparams['lossFunction'] == 'MSE':
                 Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
@@ -531,19 +533,19 @@ if __name__ == '__main__':
         final_loss_error_list = []
 
         # at the end we train the final classification layer
-        for epoch in tqdm(range(jparams['class_epoch'])):
-            # we train the classification layer
-            class_train_error_epoch = classify_network(net, class_net, jparams, layer_loader)
-            class_train_error_list.append(class_train_error_epoch.item())
-            # we test the final test error
-            final_test_error_epoch, final_loss_epoch = test_unsupervised_ep_layer(net, class_net, jparams, test_loader)
-            final_test_error_list.append(final_test_error_epoch.item())
-            final_loss_error_list.append(final_loss_epoch.item())
-            class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
-                                              filename='classification_layer'+str(classLabel_percentage)+'.csv', loss=final_loss_error_list)
-
-            # save the trained class_net
-            torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
+        # for epoch in tqdm(range(jparams['class_epoch'])):
+        #     # we train the classification layer
+        #     class_train_error_epoch = classify_network(net, class_net, jparams, layer_loader)
+        #     class_train_error_list.append(class_train_error_epoch.item())
+        #     # we test the final test error
+        #     final_test_error_epoch, final_loss_epoch = test_unsupervised_ep_layer(net, class_net, jparams, test_loader)
+        #     final_test_error_list.append(final_test_error_epoch.item())
+        #     final_loss_error_list.append(final_loss_epoch.item())
+        #     class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
+        #                                       filename='classification_layer'+str(classLabel_percentage)+'.csv', loss=final_loss_error_list)
+        #
+        #     # save the trained class_net
+        #     torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
 
         # TODO use the trained class net to give the direct response
         # class_net.load_state_dict(torch.load(r'C:\...'))
@@ -593,6 +595,82 @@ if __name__ == '__main__':
             display = jparams['display'][0:2]
             imShape = jparams['imShape'][-2:]
             plot_imshow(overlap, jparams['fcLayers'][0], display, imShape, 'overlap', path_imshow, prefix)
+
+
+
+    # TODO do the maximum activation by reverse propagation
+    if jparams['reverseProp']:
+        # create the reconstructed images at the beginning
+        path_activation = pathlib.Path(BASE_PATH + prefix + 'reverseProp')
+        path_activation.mkdir(parents=True, exist_ok=True)
+
+        # return the responses of output neurons
+        response, max0_indice = classify(net, jparams, class_loader)
+        # we choose the display form of output neurons
+        display = jparams['display'][-2:]
+        imShape = jparams['imShape'][-2:]
+        neuron_per_class = int(display[0] * display[1] / jparams['n_class'])
+
+        indx_neurons = []
+        indx_all_class = []
+        max_neurons_per_class = jparams['fcLayers'][0]
+
+        # select the neuron to be presented at the beginning
+        for i in range(jparams['n_class']):
+            index_i = (response.cpu() == i).nonzero(as_tuple=True)[0].numpy()
+            np.random.shuffle(index_i)
+            indx_all_class.append(index_i)
+
+            max_neurons_per_class = min(max_neurons_per_class, len(index_i))
+            range_index = min(len(index_i), neuron_per_class)
+            indx_neurons.extend(index_i[0:range_index])
+
+        indx_all_class_torch = torch.zeros([10, max_neurons_per_class], dtype=torch.int64, device=net.device)
+        for i in range(jparams['n_class']):
+            indx_all_class_torch[i, :] = torch.tensor(indx_all_class[i][0:max_neurons_per_class])
+
+        # create a tensor including one image for each selected neuron
+        # TODO make a compatible version for CNN
+
+        # generate the target
+        nudge_target = torch.zeros((len(indx_neurons), jparams['fcLayers'][0]), requires_grad=False, device=net.device)
+        indx_neurons = torch.tensor(indx_neurons).to(net.device).reshape(-1, 1)
+        nudge_target.scatter_(1, indx_neurons, torch.ones((len(indx_neurons), jparams['fcLayers'][0]), requires_grad=False, device=net.device))
+        # add the beta
+        nudge_target = nudge_target*1
+
+        # initialize
+        clamped_input = torch.zeros((len(indx_neurons), jparams['fcLayers'][-1]), requires_grad=False, device=net.device)
+        s = net.initState(clamped_input)
+        # transfer to cuda
+        if net.cuda:
+            s = [item.to(net.device) for item in s]
+        with torch.no_grad():
+            for t in range(jparams['T']):
+                s = net.stepper_generate(s, nudge_target)
+
+        # plot the figure
+        figName = 'back-propagated input of fixed output values'
+        plot_imshow(s[-1].T.cpu(), len(indx_neurons), display, imShape, figName, path_activation, prefix)
+
+        # generate the target for each class
+        nudge_class_target = torch.zeros((10, jparams['fcLayers'][0]), requires_grad=False, device=net.device)
+        nudge_class_target.scatter_(1, indx_all_class_torch, torch.ones((10, jparams['fcLayers'][0]), requires_grad=False, device=net.device))
+        nudge_class_target = nudge_class_target * 1
+
+        # initialize
+        clamped_input = torch.zeros([10, jparams['fcLayers'][-1]], requires_grad=False,
+                                    device=net.device)
+        s = net.initState(clamped_input)
+        # transfer to cuda
+        if net.cuda:
+            s = [item.to(net.device) for item in s]
+        with torch.no_grad():
+            for t in range(jparams['T']):
+                s = net.stepper_generate(s, nudge_class_target)
+        # plot the figure
+        figName = 'back-propagated input of specific class target'
+        plot_imshow(s[-1].T.cpu(), 10, [2, 5], imShape, figName, path_activation, prefix)
 
     if jparams['maximum_activation']:
         # create the maximum activation dossier
