@@ -32,8 +32,8 @@ parser.add_argument(
 parser.add_argument(
     '--trained_path',
     type=str,
-    #default=r'.',
-    default=r'D:\Results_data\Visible dropout perceptron\784-2000\S-10',
+    default=r'.',
+    #default=r'D:\Results_data\Visible dropout perceptron\784-2000\S-10',
     help='path of model_dict_state_file'
 )
 
@@ -472,6 +472,8 @@ if __name__ == '__main__':
         entire_test_error_list = []
         # define unsupervised optimizer
         unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
+        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'],
+                                                                  jparams['pre_optimizer'])
 
         for epoch in tqdm(range(jparams['epochs'])):
             # supervised reminder

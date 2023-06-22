@@ -282,6 +282,7 @@ def Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             del (targets)
             output = s[0].clone()
             targets, maxindex = define_unsupervised_target(output, jparams['nudge_N'], net.device, Xth)
+
             targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
 
         if jparams['errorEstimate'] == 'one-sided':
@@ -365,14 +366,18 @@ def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
                     len(h)))
 
         # free phase
+        # TODO change all the rho_y to pre_y
         h, y, rho_y = net.forward_softmax(h, p_distribut, y_distribut)
         heq = h.copy()
         yeq = y.clone()
 
         if Xth is not None:
             del(targets)
+            #targets, maxindex = define_unsupervised_target(y, jparams['nudge_N'], net.device, Xth)
             targets, maxindex = define_unsupervised_target(rho_y, jparams['nudge_N'], net.device, Xth)
-            targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
+
+        # label smoothing
+        targets = smoothLabels(targets.float(), 0.2, jparams['nudge_N'])
 
         if jparams['errorEstimate'] == 'one-sided':
             # nudging phase

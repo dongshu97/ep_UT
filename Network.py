@@ -216,11 +216,11 @@ class MlpEP(jit.ScriptModule):
                        target:Optional[torch.Tensor]=None,
                           beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
 
-        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)*self.nudge_N
-        rho_y = self.rho(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0])
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        pre_y = torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0]
         if y_distribut is not None:
             y = y_distribut*y
-            rho_y = y_distribut * rho_y
+            pre_y = y_distribut * pre_y
 
         if len(h) > 1:
             dhdt=[]
@@ -242,7 +242,7 @@ class MlpEP(jit.ScriptModule):
                 if self.clamped:
                     h[layer] = h[layer].clamp(0, 1)
 
-        return h, y, rho_y
+        return h, y, pre_y
 
     @jit.script_method
     def forward_softmax(self, h:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]]=None,y_distribut:Optional[torch.Tensor]=None,
@@ -250,21 +250,22 @@ class MlpEP(jit.ScriptModule):
 
         T, Kmax = self.T, self.Kmax
 
-        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)*self.nudge_N
-        rho_y = self.rho(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0])
+        y = F.softmax(torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0], dim=1)
+        pre_y = torch.mm(self.rho(h[0]), self.W[0]) + self.bias[0]
+
         if y_distribut is not None:
             y = y_distribut*y
-            rho_y = y_distribut*rho_y
+            pre_y = y_distribut*pre_y
 
         with torch.no_grad():
             if beta is None and target is None:
                 if len(h) > 1:
                     for t in range(T):
-                        h, y, rho_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
+                        h, y, pre_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
             else:
                 for t in range(Kmax):
-                    h, y, rho_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
-        return h, y, rho_y
+                    h, y, pre_y = self.stepper_hidden(h, p_distribut, y_distribut, target=target, beta=beta)
+        return h, y, pre_y
 
     @jit.script_method
     def stepper_c_ep(self, s:List[torch.Tensor], p_distribut: Optional[List[torch.Tensor]], target:Optional[torch.Tensor]=None,

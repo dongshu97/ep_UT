@@ -225,7 +225,7 @@ def jparamsCreate(pre_config, trial):
         # jparams["pre_lr"] = pre_lr.copy()
         jparams["pre_lr"].reverse()
         jparams["eta"] = 0.5
-        jparams["gamma"] = 0.5
+        jparams["gamma"] = 0.1
         jparams["beta"] = 0.45
         jparams["nudge_N"] = 1
         jparams["Optimizer"] = trial.suggest_categorical("Optimizer", ['SGD', 'Adam'])
@@ -233,7 +233,7 @@ def jparamsCreate(pre_config, trial):
         jparams["batchSize"] = trial.suggest_int("batchSize", 10, 512)
         lr = []
         for i in range(jparams["numLayers"]-1):
-            lr_i = trial.suggest_float("lr"+str(i), 1e-7, 1, log=True)
+            lr_i = trial.suggest_float("lr"+str(i), 1e-9, 1, log=True)
             # to verify whether we need to change the name of lr_i
             lr.append(lr_i)
         jparams["lr"] = lr.copy()
@@ -315,24 +315,23 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
         else:
             raise ValueError("supervised training data or unsupervised training data is not given ")
 
-        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['pre_lr'],
-                                                                      jparams['pre_optimizer'])
-        for epoch in tqdm(range(jparams["pre_epochs"])):
-            if jparams['pre_loss'] == 'MSE':
-                train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
-            elif jparams['pre_loss'] == 'Cross-entropy':
-                train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
-
-            validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
+        #supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['pre_lr'], jparams['pre_optimizer'])
+        # for epoch in tqdm(range(jparams["pre_epochs"])):
+        #     if jparams['pre_loss'] == 'MSE':
+        #         train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+        #     elif jparams['pre_loss'] == 'Cross-entropy':
+        #         train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
+        #
+        #     validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
 
         unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
         for epoch in tqdm(range(jparams["epochs"])):
-            # supervised reminder
+            # supervised reminder but use the unsupervised optimizer
             if jparams['pre_loss'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, unsupervised_optimizer, epoch)
             elif jparams['pre_loss'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, unsupervised_optimizer,
                                                                      epoch)
             # unsupervised training
             if jparams['lossFunction'] == 'MSE':
@@ -344,6 +343,8 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             # Handle pruning based on the intermediate value.
             trial.report(entire_test_epoch, epoch+jparams['pre_epochs'])
             if trial.should_prune():
+                raise optuna.TrialPruned()
+            if entire_test_epoch > 0.24:
                 raise optuna.TrialPruned()
 
         return entire_test_epoch
@@ -419,6 +420,12 @@ def objective(trial, pre_config):
         else:
             final_err = train_validation(jparams, net, trial, validation_loader, optimizer, train_loader=train_loader)
     elif jparams["action"] == 'semi-supervised_ep':
+        #TODO load the pretrained network
+        # TODO prepare the supervised part
+        with open(r'D:\Results_data\EP_batchHomeo\784-2000-N7-beta0.31-hardsigm-lr0.0159-batch139-gamma0.2-epoch100\S-15\model_entire.pt','rb') as f:
+            loaded_net = torch.jit.load(f)
+        net.W = loaded_net.W.copy()
+        net.bias = loaded_net.bias.copy()
         final_err = train_validation(jparams, net, trial, validation_loader, optimizer, supervised_loader=supervised_loader, unsupervised_loader=unsupervised_loader)
 
     del(jparams)
