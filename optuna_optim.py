@@ -334,9 +334,9 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], unsupervised_lr,
                                                                           jparams['Optimizer'])
             # supervised reminder but use the unsupervised optimizer
-            if jparams['pre_loss'] == 'MSE':
+            if jparams['lossFunction'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
-            elif jparams['pre_loss'] == 'Cross-entropy':
+            elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
                                                                      epoch)
             # unsupervised training

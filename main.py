@@ -223,18 +223,13 @@ if __name__ == '__main__':
     BASE_PATH, name = createPath()
 
     # we create the network and define the  parameters
-    if jparams['pre_epochs'] > 0 and jparams['action'] == 'semi-supervised_ep':
-        initial_lr = jparams['pre_lr']
-    else:
-        initial_lr = jparams['lr']
-
     if jparams['convNet']:
         net = ConvEP(jparams, rho, rhop)
     else:
         net = torch.jit.script(MlpEP(jparams, rho, rhop))
 
     # we define the optimizer
-    net_params, optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
+    net_params, optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
     # we load the pre-trained network
     if jparams['analysis_preTrain']:
@@ -485,10 +480,11 @@ if __name__ == '__main__':
                                                                           jparams['Optimizer'])
             supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], supervised_lr,
                                                                       jparams['pre_optimizer'])
+
             # supervised reminder
-            if jparams['pre_loss'] == 'MSE':
+            if jparams['lossFunction'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
-            elif jparams['pre_loss'] == 'Cross-entropy':
+            elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
                                                                      epoch)
             supervised_test_epoch = test_supervised_ep(net, jparams, test_loader)
