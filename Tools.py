@@ -27,7 +27,7 @@ def classify(net, jparams, class_loader):
         if net.cuda:
             targets = targets.to(net.device)
 
-        output = inference_EP(net, jparams, data)
+        output = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
 
         # record all the output values
         if batch_idx == 0:
@@ -89,7 +89,7 @@ def classify_network(net, class_net, jparams, layer_loader):
         if net.cuda:
             targets = targets.to(net.device)
 
-        x = inference_EP(net, jparams, data)
+        x = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
         output = class_net.forward(x)
         # calculate the loss
 
@@ -129,7 +129,7 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
             targets = targets.to(net.device)
 
         # forward propagation in classification layer
-        x = inference_EP(net, jparams, data)
+        x = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
         output = class_net.forward(x)
         # calculate the loss
         if jparams['class_activation'] == 'softmax':
@@ -422,9 +422,9 @@ def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
         return Xth
 
 
-def inference_EP(net, jparams, data):
+def inference_EP(net, jparams, data, loss_type):
 
-    if jparams['lossFunction'] == 'MSE':
+    if loss_type == 'MSE':
         if jparams['convNet'] == 1:
             # initiate the neurons
             batchSize = data.size(0)
@@ -447,7 +447,7 @@ def inference_EP(net, jparams, data):
         # we note the last layer as s_output
         output = s[0].clone().detach()
 
-    elif jparams['lossFunction'] == 'Cross-entropy':
+    elif loss_type == 'Cross-entropy':
         # init the hidden layers
         h, y = net.initHidden(data)
         if net.cuda:
@@ -516,7 +516,7 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
         if net.cuda:
             targets = targets.to(net.device)
 
-        output = inference_EP(net, jparams, data)
+        output = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
 
         '''average value'''
         classvalue = torch.zeros(output.size(0), jparams['n_class'], device=net.device)
@@ -560,7 +560,7 @@ def test_unsupervised_ep(net, jparams, test_loader, response, record=None):
         return test_error_av, test_error_max
 
 
-def test_supervised_ep(net, jparams, test_loader, record=None):
+def test_supervised_ep(net, jparams, test_loader, loss_type, record=None):
     '''
     Function to test the network
     '''
@@ -581,7 +581,7 @@ def test_supervised_ep(net, jparams, test_loader, record=None):
         if net.cuda:
             targets = targets.to(net.device)
 
-        output = inference_EP(net, jparams, data)
+        output = inference_EP(net, jparams, data, loss_type)
         prediction = torch.argmax(output, dim=1)
         corrects_supervised += (prediction == targets).sum().float()
 

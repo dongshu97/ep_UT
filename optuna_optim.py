@@ -279,7 +279,7 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
             elif jparams['lossFunction'] == 'Cross-entropy':
                 train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
 
-            validation_error_epoch = test_supervised_ep(net, jparams, validation_loader)
+            validation_error_epoch = test_supervised_ep(net, jparams, validation_loader, jparams['lossFunction'])
 
             # Handle pruning based on the intermediate value.
             trial.report(validation_error_epoch, epoch)
@@ -344,7 +344,7 @@ def train_validation(jparams, net, trial, validation_loader, optimizer, train_lo
                 Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
                 Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            entire_test_epoch = test_supervised_ep(net, jparams, validation_loader)
+            entire_test_epoch = test_supervised_ep(net, jparams, validation_loader, jparams['lossFunction'])
 
             # Handle pruning based on the intermediate value.
             trial.report(entire_test_epoch, epoch+jparams['pre_epochs'])

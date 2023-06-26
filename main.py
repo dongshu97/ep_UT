@@ -330,7 +330,7 @@ if __name__ == '__main__':
             # if jparams['Dropout']:
             #     net.inferenceWeight(jparams['dropProb'])
 
-            test_error_epoch = test_supervised_ep(net, jparams, test_loader)
+            test_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
 
             # if jparams['Dropout']:
             #     net.recoverWeight(jparams['dropProb'])
@@ -454,7 +454,7 @@ if __name__ == '__main__':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
             elif jparams['pre_loss'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
-            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader)
+            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['pre_loss'])
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
             PretrainFrame = updateDataframe(BASE_PATH, PretrainFrame, pretrain_error_list, pretest_error_list, 'pre_supervised.csv')
@@ -487,13 +487,13 @@ if __name__ == '__main__':
             elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
                                                                      epoch)
-            supervised_test_epoch = test_supervised_ep(net, jparams, test_loader)
+            supervised_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
             # unsupervised training --> consider only MSE
             if jparams['lossFunction'] == 'MSE':
                 Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
                 Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            entire_test_epoch = test_supervised_ep(net, jparams, test_loader)
+            entire_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
 
             supervised_test_error_list.append(supervised_test_epoch.item())
             entire_test_error_list.append(entire_test_epoch.item())
@@ -566,7 +566,7 @@ if __name__ == '__main__':
         path_YinYang.mkdir(parents=True, exist_ok=True)
 
         if jparams['action'] == 'supervised_ep':
-            test_error_final, test_class_record = test_supervised_ep(net, jparams, test_loader, record=1)
+            test_error_final, test_class_record = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'], record=1)
         elif jparams['action'] == 'unsupervised_ep':
             # class process
             response, max0_indice = classify(net, jparams, class_loader)
