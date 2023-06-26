@@ -212,7 +212,8 @@ elif jparams['activation_function'] == 'relu':
 if __name__ == '__main__':
 
     jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
-    jparams['C_list'].reverse()  # we reverse also the list of channels
+    jparams['C_list'].reverse() # we reverse also the list of channels
+    jparams['pre_lr'].reverse()
     jparams['lr'].reverse()
     jparams['display'].reverse()
     jparams['imShape'].reverse()
@@ -470,12 +471,20 @@ if __name__ == '__main__':
 
         supervised_test_error_list = []
         entire_test_error_list = []
+        supervised_lr = jparams['lr'].copy()
+        unsupervised_lr = supervised_lr.copy()
         # define unsupervised optimizer
-        unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
-        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'],
-                                                                  jparams['pre_optimizer'])
-
         for epoch in tqdm(range(jparams['epochs'])):
+            # redefine the learning rate for each epoch
+            k1 = (epoch + 1) * 3 / 200
+            unsupervised_lr = [i*k1 for i in supervised_lr]
+            # print('supervised learning rate is:', supervised_lr)
+            # print('unsupervised learning rate is:', unsupervised_lr)
+            # print('ratio are:', supervised_lr[0]/unsupervised_lr[0], supervised_lr[1]/unsupervised_lr[1])
+            unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], unsupervised_lr,
+                                                                          jparams['Optimizer'])
+            supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], supervised_lr,
+                                                                      jparams['pre_optimizer'])
             # supervised reminder
             if jparams['pre_loss'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
