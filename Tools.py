@@ -634,7 +634,7 @@ def initDataframe(path, method='supervised', dataframe_to_init='results.csv'):
             columns_header = ['Test_Error_av', 'Min_Test_Error_av', 'Test_Error_max', 'Min_Test_Error_max']
         elif method == 'semi-supervised':
             # TODO maybe to be changed
-            columns_header = ['Supervised_Test_Error', 'Min_Supervised_Test_Error', 'Entire_Test_Error', 'Min_Entire_Test_Error']
+            columns_header = ['Unsupervised_Test_Error', 'Min_Unsupervised_Test_Error', 'Supervised_Test_Error', 'Min_Supervised_Test_Error']
         elif method == 'classification_layer':
             columns_header = ['Train_Class_Error', 'Min_Train_Class_Error', 'Final_Test_Error', 'Min_Final_Test_Error',
                               'Final_Test_Loss', 'Min_Final_Test_Loss']

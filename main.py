@@ -476,6 +476,13 @@ if __name__ == '__main__':
         unsupervised_scheduler = torch.optim.lr_scheduler.LinearLR(unsupervised_optimizer, start_factor=0.001, end_factor=0.3, total_iters=200)
 
         for epoch in tqdm(range(jparams['epochs'])):
+            # unsupervised training --> consider only MSE
+            if jparams['lossFunction'] == 'MSE':
+                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
+            elif jparams['lossFunction'] == 'Cross-entropy':
+                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
+            entire_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
+            unsupervised_scheduler.step()
             # supervised reminder
             if jparams['lossFunction'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
@@ -484,16 +491,9 @@ if __name__ == '__main__':
                                                                      epoch)
             supervised_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
             scheduler.step()
-            # unsupervised training --> consider only MSE
-            if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            entire_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-            unsupervised_scheduler.step()
             supervised_test_error_list.append(supervised_test_epoch.item())
             entire_test_error_list.append(entire_test_epoch.item())
-            SEMIFRAME = updateDataframe(BASE_PATH, SEMIFRAME, supervised_test_error_list, entire_test_error_list, 'semi-supervised.csv')
+            SEMIFRAME = updateDataframe(BASE_PATH, SEMIFRAME, entire_test_error_list, supervised_test_error_list, 'semi-supervised.csv')
             with open(BASE_PATH + prefix + 'model_semi_entire.pt', 'wb') as f:
                 torch.jit.save(net, f)
 
