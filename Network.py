@@ -358,7 +358,11 @@ class MlpEP(jit.ScriptModule):
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
-
+        # if self.randomHidden:
+        #     # we clear the gradients of hidden layers
+        #     for i in range(1, len(self.W)):
+        #         self.W[i].grad = torch.zeros(gradW[i].size(), device=self.device)
+        #         self.bias[i].grad = torch.zeros(gradBias[i].size(), device=self.device)
 
     #@jit.script_method
     def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
@@ -385,6 +389,12 @@ class MlpEP(jit.ScriptModule):
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
+
+        # if self.randomHidden:
+        #     # we clear the gradients of hidden layers
+        #     for i in range(1, len(self.W)):
+        #         self.W[i].grad = torch.zeros(gradW[i].size(), device=self.device)
+        #         self.bias[i].grad = torch.zeros(gradBias[i].size(), device=self.device)
 
     @jit.script_method
     def weightNormalization(self):

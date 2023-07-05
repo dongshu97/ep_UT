@@ -88,7 +88,10 @@ if jparams['dataset'] == 'mnist':
         #     flatten_dataset = train_set.data.view(60000, -1)
         targets = train_set.targets
         #TODO fix the semi_seed
-        semi_seed = 13
+        if jparams['semi_seed'] < 0:
+            semi_seed = None
+        else:
+            semi_seed = jparams['semi_seed']
         # seperate the supervised and unsupervised dataset
         supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
                                                                           jparams['fcLayers'][-1], jparams['n_class'],
@@ -118,7 +121,6 @@ if jparams['dataset'] == 'mnist':
     # define the class dataset
     seed = 34  # seed number should between 0 to 42
 
-    # TODO this part can use the same method as data-split of semi-supervised learning
     x = train_set.data
     y = train_set.targets
 
@@ -446,14 +448,14 @@ if __name__ == '__main__':
 
         pretrain_error_list = []
         pretest_error_list = []
-
-        supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['pre_lr'], jparams['pre_optimizer'])
-
+        # define scheduler for supervised optimizer
+        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=300)
         for epoch in tqdm(range(jparams['pre_epochs'])):
             if jparams['pre_loss'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['pre_loss'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer, epoch)
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
+            scheduler.step()
             pretest_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['pre_loss'])
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
@@ -468,33 +470,27 @@ if __name__ == '__main__':
         entire_test_error_list = []
         supervised_lr = jparams['lr'].copy()
         unsupervised_lr = supervised_lr.copy()
-        # define unsupervised optimizer
-        for epoch in tqdm(range(jparams['epochs'])):
-            # redefine the learning rate for each epoch
-            k1 = (epoch + 1) * 3 / 200
-            unsupervised_lr = [i*k1 for i in supervised_lr]
-            # print('supervised learning rate is:', supervised_lr)
-            # print('unsupervised learning rate is:', unsupervised_lr)
-            # print('ratio are:', supervised_lr[0]/unsupervised_lr[0], supervised_lr[1]/unsupervised_lr[1])
-            unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], unsupervised_lr,
-                                                                          jparams['Optimizer'])
-            supervised_params, supervised_optimizer = defineOptimizer(net, jparams['convNet'], supervised_lr,
-                                                                      jparams['pre_optimizer'])
+        # define unsupervised optimizer and scheduler
+        unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'],
+                                                                      jparams['Optimizer'])
+        unsupervised_scheduler = torch.optim.lr_scheduler.LinearLR(unsupervised_optimizer, start_factor=0.001, end_factor=0.3, total_iters=200)
 
+        for epoch in tqdm(range(jparams['epochs'])):
             # supervised reminder
             if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, supervised_optimizer, epoch)
+                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, supervised_optimizer,
+                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
                                                                      epoch)
             supervised_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
+            scheduler.step()
             # unsupervised training --> consider only MSE
             if jparams['lossFunction'] == 'MSE':
                 Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             elif jparams['lossFunction'] == 'Cross-entropy':
                 Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
             entire_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-
+            unsupervised_scheduler.step()
             supervised_test_error_list.append(supervised_test_epoch.item())
             entire_test_error_list.append(entire_test_epoch.item())
             SEMIFRAME = updateDataframe(BASE_PATH, SEMIFRAME, supervised_test_error_list, entire_test_error_list, 'semi-supervised.csv')

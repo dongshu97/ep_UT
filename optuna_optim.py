@@ -403,13 +403,9 @@ def objective(trial, pre_config):
     else:
         net = torch.jit.script(MlpEP(jparams, rho, rhop))
     # TODO to include the CNN version
-    if jparams['pre_epochs'] > 0:
-        initial_lr = jparams['pre_lr']
-    else:
-        initial_lr = jparams['lr']
 
     # define the optimizer
-    net_params, optimizer = defineOptimizer(net, jparams['convNet'], initial_lr, jparams['Optimizer'])
+    net_params, optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
 
     # load the trained unsupervised network when we train classification layer
     if jparams["action"] == 'class_layer':
@@ -434,7 +430,7 @@ def objective(trial, pre_config):
         #TODO load the pretrained network
         # TODO prepare the supervised part
         with open(r'D:\Results_data\pretrain_EP\100_labels\S-1\model_entire.pt','rb') as f:
-            loaded_net = torch.jit.load(f)
+            loaded_net = torch.jit.load(f, map_location=net.device)
         net.W = loaded_net.W.copy()
         net.bias = loaded_net.bias.copy()
         final_err = train_validation(jparams, net, trial, validation_loader, optimizer, supervised_loader=supervised_loader, unsupervised_loader=unsupervised_loader)

@@ -195,7 +195,7 @@ def generate_N_targets_label(targets, number_per_class, output_neurons):
     return torch.from_numpy(N_targets)
 
 
-def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_number, transform, seed=1):
+def Semisupervised_dataset(train_set, targets, output_neurons, n_class, labeled_number, transform, seed=None):
 
     fraction = labeled_number/len(targets)
     # we split the dataset for supervised training and unsupervised training
