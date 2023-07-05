@@ -448,7 +448,7 @@ if __name__ == '__main__':
         pretrain_error_list = []
         pretest_error_list = []
         # define scheduler for supervised optimizer
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=300)
+        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.05, total_iters=300)
         for epoch in tqdm(range(jparams['pre_epochs'])):
             if jparams['lossFunction'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
@@ -472,7 +472,7 @@ if __name__ == '__main__':
         # define unsupervised optimizer and scheduler
         unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'],
                                                                       jparams['Optimizer'])
-        unsupervised_scheduler = torch.optim.lr_scheduler.LinearLR(unsupervised_optimizer, start_factor=0.001, end_factor=0.3, total_iters=200)
+        unsupervised_scheduler = torch.optim.lr_scheduler.LinearLR(unsupervised_optimizer, start_factor=0.001, end_factor=0.15, total_iters=200)
 
         for epoch in tqdm(range(jparams['epochs'])):
             # unsupervised training --> consider only MSE
