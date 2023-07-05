@@ -215,7 +215,6 @@ if __name__ == '__main__':
 
     jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
     jparams['C_list'].reverse() # we reverse also the list of channels
-    jparams['pre_lr'].reverse()
     jparams['lr'].reverse()
     jparams['display'].reverse()
     jparams['imShape'].reverse()
@@ -236,7 +235,7 @@ if __name__ == '__main__':
     # we load the pre-trained network
     if jparams['analysis_preTrain']:
         with open(r'C:/model_entire.pt', 'rb') as f:
-            net = torch.jit.load(f)
+            net = torch.jit.load(f, map_location=net.device)
         net.eval()
 
     # Cuda problem
@@ -451,12 +450,12 @@ if __name__ == '__main__':
         # define scheduler for supervised optimizer
         scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=300)
         for epoch in tqdm(range(jparams['pre_epochs'])):
-            if jparams['pre_loss'] == 'MSE':
+            if jparams['lossFunction'] == 'MSE':
                 pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['pre_loss'] == 'Cross-entropy':
+            elif jparams['lossFunction'] == 'Cross-entropy':
                 pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
             scheduler.step()
-            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['pre_loss'])
+            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
             pretrain_error_list.append(pretrain_error_epoch.item())
             pretest_error_list.append(pretest_error_epoch.item())
             PretrainFrame = updateDataframe(BASE_PATH, PretrainFrame, pretrain_error_list, pretest_error_list, 'pre_supervised.csv')
@@ -500,7 +499,7 @@ if __name__ == '__main__':
     elif jparams['action'] == 'visu':
         # load the pre-trained network
         with open(args.trained_path + prefix +'model_entire.pt', 'rb') as f:
-            loaded_net = torch.jit.load(f)
+            loaded_net = torch.jit.load(f, map_location=net.device)
 
         if jparams['convNet']:
             net = ConvEP(jparams, rho, rhop)
