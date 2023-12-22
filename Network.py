@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.jit as jit
 import torch.nn.utils.prune as prune
-
+from activations import *
 from typing import List, Optional, Tuple
 
 
@@ -15,33 +15,8 @@ but the problem is that, there are different variables for Conv class than the M
 so whether we will merge s and h together?
 '''
 
-
-def defineOptimizer(net, convNet, lr, type):
-
-    net_params = []
-    if convNet:
-        for i in range(len(net.W)):
-            net_params += [{'params': net.W[i].weight, 'lr':lr[i]}]
-            net_params += [{'params': net.W[i].bias, 'lr':lr[i]}]
-        for i in range(len(net.Conv)):
-            net_params += [{'params': net.Conv[i].weight, 'lr': lr[i+len(net.W)]}]
-            net_params += [{'params': net.Conv[i].bias, 'lr': lr[i+len(net.W)]}]
-    else:
-        for i in range(len(net.W)):
-            net_params += [{'params': [net.W[i]], 'lr': lr[i]}]
-            net_params += [{'params': [net.bias[i]], 'lr': lr[i]}]
-    if type == 'SGD':
-        optimizer = torch.optim.SGD(net_params)
-    elif type == 'Adam':
-        optimizer = torch.optim.Adam(net_params)
-    else:
-        raise ValueError("{} type of Optimizer is not defined ".format(type))
-
-    return net_params, optimizer
-
-
 def mydropout(s:List[torch.Tensor], p:List[float], y:Optional[torch.Tensor]=None)->List[torch.FloatTensor]:
-
+    # TODO change it to be a class
     # if p < 0 or p > 1:
     #     raise ValueError("dropout probability has to be between 0 and 1, " "but got {}".format(p))
     p_distribut = []
@@ -112,6 +87,8 @@ def define_unsupervised_target(output, N, device, Xth=None):
     return unsupervised_targets, N_maxindex
 
 
+
+
 class forwardNN(nn.Module):
     def __init__(self, fcLayers, ep_W):
         super(forwardNN, self).__init__()
@@ -138,11 +115,9 @@ class MlpEP(jit.ScriptModule):
         self.dt = jparams['dt']
         self.beta = torch.tensor(jparams['beta'])
         self.clamped = jparams['clamped']
-        self.coeffDecay = jparams['coeffDecay']
         self.batchSize = jparams['batchSize']
         self.fcLayers = jparams['fcLayers']
         self.errorEstimate = jparams['errorEstimate']
-        self.randomHidden = jparams['randomHidden']
         self.gamma = jparams['gamma']
         self.Prune = False
         self.W_mask = [1, 1]
@@ -158,19 +133,6 @@ class MlpEP(jit.ScriptModule):
             self.cuda = False
 
         self.device = device
-
-        # # The following parameters are for Adam optimizer
-        # self.beta1 = 0.9
-        # self.beta2 = 0.999
-        # self.m_dw, self.v_dw = [], []
-        # self.m_db, self.v_db = [], []
-        # with torch.no_grad():
-        #     for i in range(len(jparams['fcLayers'])-1):
-        #         self.m_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-        #         self.v_dw.append(torch.zeros(jparams['fcLayers'][i+1], jparams['fcLayers'][i], device=device))
-        #         self.m_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-        #         self.v_db.append(torch.zeros(jparams['fcLayers'][i], device=device))
-        # self.epsillon = 1e-8
 
         # We define the parameters to be trained
 
@@ -189,7 +151,7 @@ class MlpEP(jit.ScriptModule):
             b = torch.empty(jparams['fcLayers'][i], device=device, requires_grad=True)
             # bound = 1 / np.sqrt(jparams['fcLayers'][i])
             #nn.init.uniform_(b, a=-bound, b=bound)
-            nn.init.zeros_(b)
+
             bias.append(b)
         self.bias = bias
 
@@ -212,6 +174,7 @@ class MlpEP(jit.ScriptModule):
 
 
     @jit.script_method
+    # todo combine it with the same stepper
     def stepper_hidden(self, h:List[torch.Tensor], p_distribut:Optional[List[torch.Tensor]], y_distribut:Optional[torch.Tensor],
                        target:Optional[torch.Tensor]=None,
                           beta:Optional[float]=None)->Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
@@ -281,7 +244,7 @@ class MlpEP(jit.ScriptModule):
             dsdt[0] = dsdt[0] + beta*(target-s[0])
 
         for layer in range(1, len(s)-1):  # start at the first hidden layer and then to the before last hidden layer
-            dsdt.append(-s[layer] + self.rhop(s[layer])*(torch.mm(self.rho(s[layer+1]), self.W[layer])+self.bias[layer]+torch.mm(self.rho(s[layer-1]), self.W[layer-1].T)))
+            dsdt.append(-s[layer] + self.rhop(s[layer])*(torch.mm(self.rho(s[layer+1]), self.W[layer])+self.bias[layer] + torch.mm(self.rho(s[layer-1]), self.W[layer-1].T)))
 
         for (layer, dsdt_item) in enumerate(dsdt):
             if p_distribut is not None:
@@ -309,9 +272,17 @@ class MlpEP(jit.ScriptModule):
         for (layer, dsdt_item) in enumerate(dsdt):
             s[layer + 1] = s[layer + 1] + self.dt * dsdt_item
             s[layer + 1] = s[layer + 1].clamp(0, 1)
-            #s[layer] = s[layer] + self.dt * dsdt_item
-            #s[layer] = s[layer].clamp(0, 1)
 
+        return s
+
+    def generate_image(self, clamp_input, target):
+        s = self.initState(clamp_input)
+        # transfer to cuda
+        if self.cuda:
+            s = [item.to(self.device) for item in s]
+        with torch.no_grad():
+            for t in range(self.T):
+                s = self.stepper_generate(s, target)
         return s
 
     @jit.script_method
@@ -333,6 +304,7 @@ class MlpEP(jit.ScriptModule):
                     s = self.stepper_c_ep(s, p_distribut, target=target, beta=beta)
 
         return s
+
 
     #@jit.script_method
     def computeGradientsEP(self, s:List[torch.Tensor], seq:List[torch.Tensor]):
@@ -358,11 +330,6 @@ class MlpEP(jit.ScriptModule):
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
-        # if self.randomHidden:
-        #     # we clear the gradients of hidden layers
-        #     for i in range(1, len(self.W)):
-        #         self.W[i].grad = torch.zeros(gradW[i].size(), device=self.device)
-        #         self.bias[i].grad = torch.zeros(gradBias[i].size(), device=self.device)
 
     #@jit.script_method
     def computeGradientEP_softmax(self, h:List[torch.Tensor], heq:List[torch.Tensor], y:torch.Tensor, target:torch.Tensor,
@@ -379,7 +346,7 @@ class MlpEP(jit.ScriptModule):
                 gradW.append(-(1/batch_size)*torch.mm(torch.transpose(self.rho(h[0]), 0, 1), (y-target)))
                 gradBias.append(-(1/batch_size)*(y-target).sum(0))
             else:
-                gradW.append(-(0.5/batch_size)*(1/batch_size)*(torch.mm(torch.transpose(self.rho(h[0]), 0, 1), (y-target)) +
+                gradW.append(-(0.5/batch_size)*(torch.mm(torch.transpose(self.rho(h[0]), 0, 1), (y-target)) +
                                           torch.mm(torch.transpose(self.rho(heq[0]), 0, 1), (ybeta-target))))
                 gradBias.append(-(0.5/batch_size)*(y+ybeta-2*target).sum(0))
             for layer in range(len(h)-1):
@@ -389,12 +356,6 @@ class MlpEP(jit.ScriptModule):
         for i in range(len(self.W)):
             self.W[i].grad = -gradW[i]
             self.bias[i].grad = -gradBias[i]
-
-        # if self.randomHidden:
-        #     # we clear the gradients of hidden layers
-        #     for i in range(1, len(self.W)):
-        #         self.W[i].grad = torch.zeros(gradW[i].size(), device=self.device)
-        #         self.bias[i].grad = torch.zeros(gradBias[i].size(), device=self.device)
 
     @jit.script_method
     def weightNormalization(self):
@@ -458,16 +419,14 @@ class MlpEP(jit.ScriptModule):
         return h, y
 
 
-class Classlayer(nn.Module):
+class Classifier(nn.Module):
     # one layer perceptron does not need to be trained by EP
     def __init__(self, jparams):
-        super(Classlayer, self).__init__()
-        # output_neuron=args.n_class
-        self.output = jparams['n_class']
-        self.input = jparams['fcLayers'][0]
-        self.activation = jparams['class_activation']
-        # define the classification layer
-        self.class_layer = nn.Linear(self.input, self.output, bias=True)
+        super(Classifier, self).__init__()
+        # construct the classifier layer
+        self.classifier = torch.nn.Sequential(nn.Dropout(p=float(jparams['class_dropProb'])),
+                                              nn.Linear(jparams['fcLayers'][0], jparams['n_class']),
+                                              func_dict[jparams['class_activation']])
 
         if jparams['device'] >= 0 and torch.cuda.is_available():
             device = torch.device("cuda:" + str(jparams['device']))
@@ -479,24 +438,8 @@ class Classlayer(nn.Module):
         self.device = device
         self = self.to(device)
 
-    def rho(self, x, type):
-        if type == 'relu':
-            return F.relu(x)
-        elif type == 'softmax':
-            return F.softmax(x, dim=1)
-        elif type == 'x':
-            return x
-        elif type == 'sigmoid':
-            return torch.sigmoid(x)
-        elif type == 'hardsigm':
-            return torch.clamp(x, 0, 1)
-        elif type == 'tanh':
-            return 0.5+0.5*torch.tanh(x)
-
     def forward(self, x):
-        x = self.rho(self.class_layer(x), self.activation)
-        return x
-    # class Dropout(nn.Module):
+        return self.classifier(x)
 
 
 class ConvEP(nn.Module):
@@ -521,21 +464,23 @@ class ConvEP(nn.Module):
 
         if jparams['dataset'] == 'mnist':
             input_size = 28
-        else:
-            raise ValueError("The convolutional network now is only designed for mnist dataset")
+        elif jparams['dataset'] == 'cifar10':
+            input_size = 32
+            # raise ValueError("The convolutional network now is only designed for mnist dataset")
 
         self.batchSize = jparams['batchSize']
         self.C_list = jparams['C_list']
 
         self.F = jparams['convF']  # filter size
 
-        # define padding size:
-        if jparams['padding']:
-            pad = int((jparams['convF'] - 1)/2)
-        else:
-            pad = 0
 
-        self.pad = pad
+        # # define padding size:
+        # if jparams['padding']:
+        #     pad = int((jparams['convF'] - 1)/2)
+        # else:
+        #     pad = 0
+        #
+        # self.pad = pad
 
         # define pooling operation
         self.pool = nn.MaxPool2d(jparams['Fpool'], stride=jparams['Fpool'], return_indices=True)
@@ -547,16 +492,17 @@ class ConvEP(nn.Module):
             raise ValueError("At least 2 convolutional layer should be applied")
 
         self.conv_number = conv_number
+        self.P = jparams['Pad']
         #self.P = []
         size_conv_list = [input_size]
         size_convpool_list = [input_size]
 
         # define the convolutional layer
         for i in range(self.conv_number):
-            Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=pad, bias=True)])
+            Conv.extend([nn.Conv2d(jparams['C_list'][i+1], jparams['C_list'][i], jparams['convF'], padding=jparams['Pad'][i], bias=True)])
             #  in default, we use introduce the bias
-            size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*pad)  # calculate the output size
-            size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*pad - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
+            size_conv_list.append(size_convpool_list[i] - jparams['convF'] + 1 + 2*jparams['Pad'][-i-1])  # calculate the output size
+            size_convpool_list.append(int(np.floor((size_convpool_list[i] - jparams['convF'] + 1 + 2*jparams['Pad'][-i-1] - jparams['Fpool'])/jparams['Fpool'] + 1)))  # the size after the pooling layer
 
         self.Conv = Conv
 
@@ -648,7 +594,7 @@ class ConvEP(nn.Module):
                 output_size = [s[self.fc_number+i-1].size(0), s[self.fc_number+i-1].size(0), self.size_conv_list[i-1],
                                self.size_conv_list[i-1]]
                 s_unpool = F.conv_transpose2d(self.unpool(s[self.fc_number+i-1], P_ind[i-1], output_size=output_size),
-                                              weight=self.Conv[i-1].weight, padding=self.pad)
+                                              weight=self.Conv[i-1].weight, padding=self.P[i-1])
                 dsdt.append(-s[self.fc_number+i] + self.rho(s_pool + s_unpool))
                 del s_pool, s_unpool, ind, output_size
 
@@ -658,7 +604,7 @@ class ConvEP(nn.Module):
         if P_ind[-2] is not None:
             output_size = [s[-2].size(0), s[-2].size(1), self.size_conv_list[-3], self.size_conv_list[-3]]
             s_unpool = F.conv_transpose2d(self.unpool(s[-2], P_ind[-2], output_size=output_size),
-                                          weight=self.Conv[-2].weight, padding=self.pad)
+                                          weight=self.Conv[-2].weight, padding=self.P[-2])
             dsdt.append(-s[-1] + self.rho(s_pool + s_unpool))
             del s_pool, s_unpool, ind, output_size
 
@@ -672,6 +618,38 @@ class ConvEP(nn.Module):
         else:
             del dsdt
             return s, P_ind
+
+    def stepper_generate(self, s: List[torch.Tensor], target: torch.Tensor):
+        # TODO set the generate step for CNN
+
+        dsdt = []
+        # fix the output
+        s[0] = target.clone()
+        # dsdt.append(0.5 * (target - s[0]))
+        for layer in range(1, len(s) - 1):
+            dsdt.append(-s[layer] + self.rhop(s[layer]) * (torch.mm(self.rho(s[layer + 1]), self.W[layer]) +
+                                                           self.bias[layer] + torch.mm(self.rho(s[layer - 1]),
+                                                                                       self.W[layer - 1].T)))
+
+        # for the input layer
+        dsdt.append(-s[-1] + (self.rhop(s[-1])) * torch.mm(self.rho(s[-2]), self.W[-1].T))  # no biases
+
+        for (layer, dsdt_item) in enumerate(dsdt):
+            s[layer + 1] = s[layer + 1] + self.dt * dsdt_item
+            s[layer + 1] = s[layer + 1].clamp(0, 1)
+
+        return s
+
+    def generate_image(self, clamp_input, target):
+        # TODO finish the generation cycle
+        s, P_ind = self.initHidden(clamp_input)
+        # transfer to cuda
+        if self.cuda:
+            s = [item.to(self.device) for item in s]
+        with torch.no_grad():
+            for t in range(self.T):
+                s = self.stepper_generate(s, target)
+        return s
 
     def forward(self, s, data, P_ind, p_distribut=None, beta=0, target=None, tracking=False):
         # TODO why rename the self.variable at the beginning?
@@ -737,16 +715,16 @@ class ConvEP(nn.Module):
                 output_size = [s[self.fc_number+i].size(0), s[self.fc_number+i].size(1), self.size_conv_list[i], self.size_conv_list[i]]
 
                 gradW_conv.append(coef*(F.conv2d(s[self.fc_number + i + 1].permute(1,0,2,3),
-                                                 self.unpool(s[self.fc_number + i], P_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)
+                                                 self.unpool(s[self.fc_number + i], P_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.P[i])
                                         - F.conv2d(seq[self.fc_number + i + 1].permute(1,0,2,3),
-                                                   self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1, 0, 2, 3))
+                                                   self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size).permute(1,0,2,3), padding=self.P[i])).permute(1, 0, 2, 3))
                 gradBias_conv.append(coef*(self.unpool(s[self.fc_number+i], P_ind[i], output_size=output_size) -
                                            self.unpool(seq[self.fc_number+i], Peq_ind[i], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[self.fc_number+i].size(1), -1).sum(1))
 
             # last layer
             output_size = [s[-1].size(0), s[-1].size(1), self.size_conv_list[-2], self.size_conv_list[-2]]
-            gradW_conv.append(coef*(F.conv2d(data.permute(1,0,2,3), self.unpool(s[-1], P_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)-
-                                    F.conv2d(data.permute(1,0,2,3), self.unpool(seq[-1], Peq_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.pad)).permute(1,0,2,3))
+            gradW_conv.append(coef*(F.conv2d(data.permute(1,0,2,3), self.unpool(s[-1], P_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.P[-1])-
+                                    F.conv2d(data.permute(1,0,2,3), self.unpool(seq[-1], Peq_ind[-1], output_size=output_size).permute(1,0,2,3), padding=self.P[-1])).permute(1,0,2,3))
             gradBias_conv.append(coef*(self.unpool(s[-1], P_ind[-1], output_size=output_size)-self.unpool(seq[-1], Peq_ind[-1], output_size=output_size)).permute(1,0,2,3).contiguous().view(s[-1].size(1),-1).sum(1))
 
         for (i, param) in enumerate(self.W):

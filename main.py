@@ -3,18 +3,14 @@ import os
 import argparse  # this can be removed
 import json
 import torch
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
 from torch.utils.data import Dataset
-import torchvision
 import torch.optim as optim
 import datetime
 import numpy as np
 import pathlib
-import time
-from tqdm import tqdm
 
 from Data import *
+from actions import *
 from Tools import *
 from Network import *
 from plotFunction import *
@@ -26,14 +22,14 @@ parser.add_argument(
     '--json_path',
     type=str,
     default=r'.',
-    #default=r'D:\Results_data\Visible dropout perceptron\784-10',
     help='path of json configuration'
 )
 parser.add_argument(
     '--trained_path',
     type=str,
-    default=r'.',
-    #default=r'D:\Results_data\Visible dropout perceptron\784-2000\S-10',
+    # default=r'.',
+    # TODO change the default path back
+    default=r'D:\Eqprop-unsuperivsed-MLP\unsupervised_results\2layer\lr0.01-0.015_beta0.2_batch32_drop0.2_0_0.3_decay1e-3\S-1',
     help='path of model_dict_state_file'
 )
 
@@ -61,86 +57,15 @@ batch_size_test = jparams['test_batchSize']
 
 if jparams['dataset'] == 'mnist':
     print('We use the MNIST Dataset')
-    # Define the Transform
-    if jparams['convNet']:
-        transforms = [torchvision.transforms.ToTensor()]
-    else:
-        transforms = [torchvision.transforms.ToTensor(), ReshapeTransform((-1,))]
+    (train_loader, test_loader,
+     class_loader, layer_loader,
+     supervised_loader, unsupervised_loader) = returnMNIST(jparams, validation=False)
 
-    # Download the MNIST dataset
-    if jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'unsupervised_conv_ep' \
-            or jparams['action'] == 'test' or jparams['action'] == 'visu':
-        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                               transform=torchvision.transforms.Compose(transforms))
-        # # we create the dataset mixed with unlabeled and labeled data
-        # if args.unlabeledPercent != 0 and args.unlabeledPercent != 1:
-        #     train_set = UnlabelDataset(train_set, './MNIST_alterLearning', args.unlabeledPercent, Seed=0)
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)
-    elif jparams['action'] == 'semi-supervised_ep' or jparams['splitData'] == 1:
-        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                               transform=torchvision.transforms.Compose(transforms),
-                                               target_transform=ReshapeTransformTarget(10))
-        # flatten the input data to a vector
-        # TODO to be changed if we introduce convolutional layers
-        # if jparams['convNet']:
-        #     flatten_dataset = train_set.data.reshape(60000, 1, 28, 28)
-        # else:
-        #     flatten_dataset = train_set.data.view(60000, -1)
-        targets = train_set.targets
-        #TODO fix the semi_seed
-        if jparams['semi_seed'] < 0:
-            semi_seed = None
-        else:
-            semi_seed = jparams['semi_seed']
-        # seperate the supervised and unsupervised dataset
-        supervised_dataset, unsupervised_dataset = Semisupervised_dataset(train_set.data, targets,
-                                                                          jparams['fcLayers'][-1], jparams['n_class'],
-                                                                          jparams['trainLabel_number'], transform=torchvision.transforms.Compose(transforms),
-                                                                          seed=semi_seed)
-        supervised_loader = torch.utils.data.DataLoader(supervised_dataset, batch_size=jparams['pre_batchSize'],
-                                                        shuffle=True)
-        unsupervised_loader = torch.utils.data.DataLoader(unsupervised_dataset, batch_size=jparams['batchSize'],
-                                                          shuffle=True)
-    else:
-    #elif jparams['action'] == 'supervised_ep' or jparams['action'] == 'train_conv_ep':
-        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                               transform=torchvision.transforms.Compose(transforms),
-                                               target_transform=ReshapeTransformTarget(10))
-        # if args.unlabeledPercent != 0 and args.unlabeledPercent != 1:
-        #     train_set = subMNISTDataset(root='./MNIST_alterLearning', train_set=train_set,
-        #                                 unlabeledPercent=args.unlabeledPercent,
-        #                                 Seed=0, transform=torchvision.transforms.Compose(transforms),
-        #                                 target_transform=ReshapeTransformTarget(10))
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=jparams['batchSize'], shuffle=True)
-
-    test_set = torchvision.datasets.MNIST(root='./data', train=False, download=True,
-                                          transform=torchvision.transforms.Compose(transforms))
-
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=jparams['test_batchSize'], shuffle=True)
-
-    # define the class dataset
-    seed = 34  # seed number should between 0 to 42
-
-    x = train_set.data
-    y = train_set.targets
-
-    classLabel_percentage = jparams['classLabel_percentage']
-    if jparams['classLabel_percentage'] == 1:
-        class_set = train_set
-        layer_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                               transform=torchvision.transforms.Compose(transforms),
-                                               target_transform=ReshapeTransformTarget(10))
-    else:
-        class_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms))
-        layer_set = splitClass(x, y, classLabel_percentage, seed=seed, transform=torchvision.transforms.Compose(transforms),
-                                 target_transform=ReshapeTransformTarget(10))
-
-    if jparams['device'] >= 0:
-        class_loader = torch.utils.data.DataLoader(class_set, batch_size=1200, shuffle=True)
-    else:
-        class_loader = torch.utils.data.DataLoader(class_set, batch_size=jparams['test_batchSize'], shuffle=True)
-
-    layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=1200, shuffle=True)
+elif jparams['dataset'] == 'cifar10':
+    print('We use the CIFAR10 dataset')
+    (train_loader, test_loader,
+     class_loader, layer_loader,
+     supervised_loader, unsupervised_loader) = returnCifar10(jparams, validation=False)
 
 elif jparams['dataset'] == 'YinYang':
     print('We use the YinYang dataset')
@@ -152,7 +77,6 @@ elif jparams['dataset'] == 'YinYang':
             train_set = YinYangDataset(size=5000, seed=42, target_transform=ReshapeTransformTarget(3))
         elif jparams['action'] == 'unsupervised_ep' or jparams['action'] == 'test' or jparams['action'] == 'visu':
             train_set = YinYangDataset(size=5000, seed=42)
-
         #validation_set = YinYangDataset(size=1000, seed=41)  # used for the hyperparameter research
 
         test_set = YinYangDataset(size=1000, seed=40)
@@ -169,14 +93,7 @@ elif jparams['dataset'] == 'YinYang':
         layer_loader = torch.utils.data.DataLoader(layer_set, batch_size=100, shuffle=True)
 
 
-#  TODO finish the CIFAR 10 dataset
-elif jparams['dataset'] == 'CIFAR10':
-    print('We use the CIFAR10 Dataset')
-    # TODO to complete the CIFAR10
-
-
 # define the activation function
-
 if jparams['activation_function'] == 'sigm':
     def rho(x):
         return 1/(1+torch.exp(-(4*(x-0.5))))
@@ -215,37 +132,27 @@ if __name__ == '__main__':
 
     jparams['fcLayers'].reverse()  # we put in the other side, output first, input last
     jparams['C_list'].reverse() # we reverse also the list of channels
+    jparams['Pad'].reverse()
     jparams['lr'].reverse()
+    jparams['pre_lr'].reverse()
     jparams['display'].reverse()
     jparams['imShape'].reverse()
     jparams['dropProb'].reverse()
     jparams['pruneAmount'].reverse()
 
     BASE_PATH, name = createPath()
+    # save hyper-parameters as json file
+    with open(BASE_PATH + prefix + "config.json", "w") as outfile:
+        json.dump(jparams, outfile)
+
+    # Cuda problem
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
     # we create the network and define the  parameters
     if jparams['convNet']:
         net = ConvEP(jparams, rho, rhop)
     else:
         net = torch.jit.script(MlpEP(jparams, rho, rhop))
-
-    # we define the optimizer
-    net_params, optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'], jparams['Optimizer'])
-
-    # we load the pre-trained network
-    if jparams['analysis_preTrain']:
-        with open(r'C:/model_entire.pt', 'rb') as f:
-            net = torch.jit.load(f, map_location=net.device)
-        net.eval()
-
-    # Cuda problem
-    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-    # save hyper-parameters as json file
-    with open(BASE_PATH + prefix + "config.json", "w") as outfile:
-        json.dump(jparams, outfile)
-
-    # TODO remove the saveHyperparameters(args, BASE_PATH)
 
     if jparams['action'] == 'test':
         print("Testing the model")
@@ -298,241 +205,66 @@ if __name__ == '__main__':
 
     elif jparams['action'] == 'supervised_ep':
         print("Training the model with supervised ep")
-
-        #saveHyperparameters(args, BASE_PATH)
-        DATAFRAME = initDataframe(BASE_PATH, method='supervised')
-
-        # save the initial network
-        if jparams['convNet']:
-            torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
-        else:
-            with open(BASE_PATH + prefix + 'model_initial.pt', 'wb') as f:
-                torch.jit.save(net, f)
-
-        train_error_list = []
-        test_error_list = []
-
-        for epoch in tqdm(range(jparams['epochs'])):
-            if jparams['splitData']:
-                if jparams['lossFunction'] == 'MSE':
-                    train_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-                elif jparams['lossFunction'] == 'Cross-entropy':
-                    if jparams['convNet']:
-                        raise ValueError("convNet can not be integrated with CNN yet")
-                    train_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
-            else:
-                if jparams['lossFunction'] == 'MSE':
-                    train_error_epoch = train_supervised_ep(net, jparams, train_loader, optimizer, epoch)
-                elif jparams['lossFunction'] == 'Cross-entropy':
-                    if jparams['convNet']:
-                        raise ValueError("convNet can not be integrated with CNN yet")
-                    train_error_epoch = train_supervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
-
-            # if jparams['Dropout']:
-            #     net.inferenceWeight(jparams['dropProb'])
-
-            test_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-
-            # if jparams['Dropout']:
-            #     net.recoverWeight(jparams['dropProb'])
-
-            #train_error_list.append(train_error.cpu().item())
-            train_error_list.append(train_error_epoch.item())
-            test_error_list.append(test_error_epoch.item())
-
-            DATAFRAME = updateDataframe(BASE_PATH, DATAFRAME, train_error_list, test_error_list)
-            # save the inference model
-            # torch.save(net.state_dict(), BASE_PATH)
-
-            # save the entire model
-            if jparams['convNet'] == 1:
-                torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_entire.pt')
-            else:
-                with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
-                    torch.jit.save(net, f)
-            # torch.save(net, BASE_PATH + prefix + 'model_entire.pt')
+        supervised_ep(net, jparams, train_loader, test_loader, BASE_PATH=BASE_PATH)
 
     elif jparams['action'] == 'unsupervised_ep':
         print("Training the model with unsupervised ep")
+        unsupervised_ep(net, jparams, train_loader, class_loader, test_loader, layer_loader, BASE_PATH=BASE_PATH)
 
-        #saveHyperparameters(args, BASE_PATH)
-        DATAFRAME = initDataframe(BASE_PATH, method='unsupervised')
-
-        # dataframe for Xth
-        Xth_dataframe = initXthframe(BASE_PATH, 'Xth_norm.csv')
-
-        # save the initial network
-        if jparams['convNet']:
-            torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_0.pt')
-        else:
-            with open(BASE_PATH + prefix + 'model_initial.pt', 'wb') as f:
-                torch.jit.save(net, f)
-
-        #net.save(BASE_PATH + prefix+'model_entire.pt')
-
-        # create a forward NN with same weights of EP network
-        # forward_net = forwardNN(jparams['fcLayers'], net.W, jparams['Prune'], jparams['PruneAmount'])
-
-        test_error_list_av = []
-        test_error_list_max = []
-
-        Xth_record = []
-        Max0_record = []
-
-        for epoch in tqdm(range(jparams['epochs'])):
-
-            # train process
-            if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, train_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, train_loader, optimizer, epoch)
-
-            # one2one class process
-            response, max0_indice = classify(net, jparams, class_loader)
-
-            # test process
-            error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
-
-            test_error_list_av.append(error_av_epoch.item())
-            test_error_list_max.append(error_max_epoch.item())
-
-            DATAFRAME = updateDataframe(BASE_PATH, DATAFRAME,  test_error_list_av, test_error_list_max)
-            # # save the inference model
-            # torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict.pt')
-
-            # save the entire model
-            if jparams['convNet'] == 1:
-                torch.save(net.state_dict(), BASE_PATH + prefix + 'model_state_dict_entire.pt')
-            else:
-                with open(BASE_PATH + prefix + 'model_entire.pt', 'wb') as f:
-                    torch.jit.save(net, f)
-
-            Xth_record.append(torch.norm(Xth).item())
-            Xth_dataframe = updateXthframe(BASE_PATH, Xth_dataframe, Xth_record)
-
-        # we create the layer for classfication
-        class_net = Classlayer(jparams)
-
-        # we create dataframe for classification layer
-        class_dataframe = initDataframe(BASE_PATH, method='classification_layer', dataframe_to_init='classification_layer.csv')
-        torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
-        class_train_error_list = []
-        final_test_error_list = []
-        final_loss_error_list = []
-
-        # at the end we train the final classification layer
-        for epoch in tqdm(range(jparams['class_epoch'])):
-            # we train the classification layer
-            class_train_error_epoch = classify_network(net, class_net, jparams, layer_loader)
-            class_train_error_list.append(class_train_error_epoch.item())
-            # we test the final test error
-            final_test_error_epoch, final_loss_epoch = test_unsupervised_ep_layer(net, class_net, jparams, test_loader)
-            final_test_error_list.append(final_test_error_epoch.item())
-            final_loss_error_list.append(final_loss_epoch.item())
-            class_dataframe = updateDataframe(BASE_PATH, class_dataframe, class_train_error_list, final_test_error_list,
-                                              filename='classification_layer.csv', loss=final_loss_error_list)
-
-            # save the trained class_net
-            torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict.pt')
-            #print('This is epoch:', epoch, 'The 0 responses neuron is:', max0_indice)
+    elif jparams['action'] == 'train_class_layer':
+        print("Train the supplementary class layer for unsupervised learning")
+        trained_path = args.trained_path + prefix + 'model_entire.pt'
+        train_class_layer(net, jparams, layer_loader, test_loader, trained_path=trained_path, BASE_PATH=BASE_PATH)
 
     elif jparams['action'] == 'semi-supervised_ep':
         print("Training the model with semi-supervised learning")
+        semi_supervised_ep(net, jparams, supervised_loader, unsupervised_loader, test_loader, BASE_PATH=BASE_PATH)
 
-        PretrainFrame = initDataframe(BASE_PATH, method='supervised', dataframe_to_init='pre_supervised.csv')
-
-        # save the initial network
-        with open(BASE_PATH + prefix + 'model_pre_supervised0.pt', 'wb') as f:
-            torch.jit.save(net, f)
-
-        pretrain_error_list = []
-        pretest_error_list = []
-        # define scheduler for supervised optimizer
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.07, total_iters=260)
-        for epoch in tqdm(range(jparams['pre_epochs'])):
-            if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer, epoch)
-            scheduler.step()
-            pretest_error_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-            pretrain_error_list.append(pretrain_error_epoch.item())
-            pretest_error_list.append(pretest_error_epoch.item())
-            PretrainFrame = updateDataframe(BASE_PATH, PretrainFrame, pretrain_error_list, pretest_error_list, 'pre_supervised.csv')
-            # save the entire model
-            with open(BASE_PATH + prefix + 'model_pre_supervised_entire.pt', 'wb') as f:
-                torch.jit.save(net, f)
-
-        SEMIFRAME = initDataframe(BASE_PATH, method='semi-supervised', dataframe_to_init='semi-supervised.csv')
-
-        supervised_test_error_list = []
-        entire_test_error_list = []
-        supervised_lr = jparams['lr'].copy()
-        unsupervised_lr = supervised_lr.copy()
-        # define unsupervised optimizer and scheduler
-        unsupervised_params, unsupervised_optimizer = defineOptimizer(net, jparams['convNet'], jparams['lr'],
-                                                                      jparams['Optimizer'])
-        unsupervised_scheduler = torch.optim.lr_scheduler.LinearLR(unsupervised_optimizer, start_factor=0.001, end_factor=0.21, total_iters=160)
-
-        for epoch in tqdm(range(jparams['epochs'])):
-            # unsupervised training --> consider only MSE
-            if jparams['lossFunction'] == 'MSE':
-                Xth = train_unsupervised_ep(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                Xth = train_unsupervised_crossEntropy(net, jparams, unsupervised_loader, unsupervised_optimizer, epoch)
-            entire_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-            unsupervised_scheduler.step()
-            # supervised reminder
-            if jparams['lossFunction'] == 'MSE':
-                pretrain_error_epoch = train_supervised_ep(net, jparams, supervised_loader, optimizer, epoch)
-            elif jparams['lossFunction'] == 'Cross-entropy':
-                pretrain_error_epoch = train_supervised_crossEntropy(net, jparams, supervised_loader, optimizer,
-                                                                     epoch)
-            supervised_test_epoch = test_supervised_ep(net, jparams, test_loader, jparams['lossFunction'])
-            scheduler.step()
-            supervised_test_error_list.append(supervised_test_epoch.item())
-            entire_test_error_list.append(entire_test_epoch.item())
-            SEMIFRAME = updateDataframe(BASE_PATH, SEMIFRAME, entire_test_error_list, supervised_test_error_list, 'semi-supervised.csv')
-            with open(BASE_PATH + prefix + 'model_semi_entire.pt', 'wb') as f:
-                torch.jit.save(net, f)
+    elif jparams['action'] == 'pre_train_ep':
+        print("Training the model with little dataset with supervised ep")
+        pre_supervised_ep(net, jparams, supervised_loader, test_loader, BASE_PATH=BASE_PATH)
 
     elif jparams['action'] == 'visu':
         # load the pre-trained network
-        with open(args.trained_path + prefix +'model_entire.pt', 'rb') as f:
-            loaded_net = torch.jit.load(f, map_location=net.device)
-
         if jparams['convNet']:
             net = ConvEP(jparams, rho, rhop)
+            net.load_state_dict(torch.load(args.trained_path + prefix +'model_state_dict_entire.pt'))
         else:
-            net = torch.jit.script(MlpEP(jparams, rho, rhop))
-
-        # TODO to change to adapt the CNN case
-        net.W = loaded_net.W.copy()
-        net.bias = loaded_net.bias.copy()
+            with open(args.trained_path + prefix + 'model_entire.pt', 'rb') as f:
+                loaded_net = torch.jit.load(f, map_location=net.device)
+                net = torch.jit.script(MlpEP(jparams, rho, rhop))
+                net.W = loaded_net.W.copy()
+                net.bias = loaded_net.bias.copy()
 
         net.eval()
 
-        # one2one response
-        response, max0_indice = classify(net, jparams, class_loader)
+        # create dataframe
+        DATAFRAME = initDataframe(BASE_PATH, method='unsupervised')
+        test_error_list_av = []
+        test_error_list_max = []
+        # one2one
+        response = classify(net, jparams, class_loader)
+        # test process
         error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
+        test_error_list_av.append(error_av_epoch.item())
+        test_error_list_max.append(error_max_epoch.item())
+        DATAFRAME = updateDataframe(BASE_PATH, DATAFRAME, test_error_list_av, test_error_list_max)
 
-        # result of one2one
-        error_av_epoch, error_max_epoch = test_unsupervised_ep(net, jparams, test_loader, response)
-        one2one_result = [error_av_epoch.cpu().numpy(), error_max_epoch.cpu().numpy()]
-        print(one2one_result)
-        np.savetxt(BASE_PATH + prefix + 'one2one.txt', one2one_result, delimiter=',')
+        # we create the layer for classfication
+        train_class_layer(net, jparams, layer_loader, test_loader, trained_path=None, BASE_PATH=BASE_PATH, trial=None)
 
-        # we create the classification layer
-        class_net = Classlayer(jparams)
 
-        # dataframe save classification layer training result
-        class_dataframe = initDataframe(BASE_PATH, method='classification_layer',
-                                        dataframe_to_init='classification_layer'+str(classLabel_percentage)+'.csv')
-        torch.save(class_net.state_dict(), BASE_PATH + prefix + 'class_model_state_dict_0.pt')
-
-        class_train_error_list = []
-        final_test_error_list = []
-        final_loss_error_list = []
+        # # we create the classification layer
+        # class_net = Classlayer(jparams)
+        #
+        # # dataframe save classification layer training result
+        # class_dataframe = initDataframe(BASE_PATH, method='classification_layer',
+        #                                 dataframe_to_init='classification_layer'+str(classLabel_percentage)+'.csv')
+        # torch.save(class_net.state_dict(), os.path.join(BASE_PATH, 'class_model_state_dict_0.pt'))
+        #
+        # class_train_error_list = []
+        # final_test_error_list = []
+        # final_loss_error_list = []
 
         # at the end we train the final classification layer
         # for epoch in tqdm(range(jparams['class_epoch'])):
@@ -565,7 +297,6 @@ if __name__ == '__main__':
         elif jparams['action'] == 'unsupervised_ep':
             # class process
             response, max0_indice = classify(net, jparams, class_loader)
-
             # test process
             error_av_final, error_max_epoch_final, av_record, max_record = test_unsupervised_ep(net, jparams, test_loader, response, record=1)
 
@@ -597,8 +328,6 @@ if __name__ == '__main__':
             display = jparams['display'][0:2]
             imShape = jparams['imShape'][-2:]
             plot_imshow(overlap, jparams['fcLayers'][0], display, imShape, 'overlap', path_imshow, prefix)
-
-
 
     # TODO do the maximum activation by reverse propagation
     if jparams['reverseProp']:
@@ -638,22 +367,31 @@ if __name__ == '__main__':
         nudge_target = torch.zeros((len(indx_neurons), jparams['fcLayers'][0]), requires_grad=False, device=net.device)
         indx_neurons = torch.tensor(indx_neurons).to(net.device).reshape(-1, 1)
         nudge_target.scatter_(1, indx_neurons, torch.ones((len(indx_neurons), jparams['fcLayers'][0]), requires_grad=False, device=net.device))
-        # add the beta
-        nudge_target = nudge_target*1
 
         # initialize
         clamped_input = torch.zeros((len(indx_neurons), jparams['fcLayers'][-1]), requires_grad=False, device=net.device)
-        s = net.initState(clamped_input)
-        # transfer to cuda
-        if net.cuda:
-            s = [item.to(net.device) for item in s]
-        with torch.no_grad():
-            for t in range(jparams['T']):
-                s = net.stepper_generate(s, nudge_target)
+
+        s = net.generate_image(clamp_input=clamped_input, target=nudge_target)
 
         # plot the figure
         figName = 'back-propagated input of fixed output values'
         plot_imshow(s[-1].T.cpu(), len(indx_neurons), display, imShape, figName, path_activation, prefix)
+
+        # generate the target for mixed images
+        mix_target = torch.zeros((50, jparams['fcLayers'][0]), requires_grad=False, device=net.device)
+        for i in range(int(jparams['n_class']/2)):
+            for j in range(jparams['n_class']):
+                mix_target[(i*jparams['n_class']+j), i] += 0.5
+                mix_target[(i * jparams['n_class'] + j), j] += 0.5
+
+        # initialize
+        clamped_input = torch.zeros((50, jparams['fcLayers'][-1]), requires_grad=False,
+                                    device=net.device)
+
+        s = net.generate_image(clamp_input=clamped_input, target=mix_target)
+
+        # plot the figure
+        plot_imshow(s[-1].T.cpu(), 50, [5, 10], imShape, 'generated_images', path_activation, prefix)
 
         # generate the target for each class
         nudge_class_target = torch.zeros((10, jparams['fcLayers'][0]), requires_grad=False, device=net.device)
@@ -663,13 +401,8 @@ if __name__ == '__main__':
         # initialize
         clamped_input = torch.zeros([10, jparams['fcLayers'][-1]], requires_grad=False,
                                     device=net.device)
-        s = net.initState(clamped_input)
-        # transfer to cuda
-        if net.cuda:
-            s = [item.to(net.device) for item in s]
-        with torch.no_grad():
-            for t in range(jparams['T']):
-                s = net.stepper_generate(s, nudge_class_target)
+        s = net.generate_image(clamp_input=clamped_input, target=nudge_class_target)
+
         # plot the figure
         figName = 'back-propagated input of specific class target'
         plot_imshow(s[-1].T.cpu(), 10, [2, 5], imShape, figName, path_activation, prefix)

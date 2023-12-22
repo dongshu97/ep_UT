@@ -7,12 +7,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import seaborn as sns
+import json
 
+sns.set_style('white')
 
-def plot_error(dataframe, idx):
+def plot_supervised_error(dataframe, idx):
     '''
     Plot train and test error over epochs
     '''
+
     train_error_tab = dataframe['Train_Error'].to_numpy()
     test_error_tab = dataframe['Test_Error'].to_numpy()
 
@@ -27,6 +31,22 @@ def plot_error(dataframe, idx):
 
     return train_error_tab, test_error_tab
 
+def plot_unsupervised_error(dataframe, idx):
+    av_error_tab = dataframe['Test_Error_av'].to_numpy()
+    max_error_tab = dataframe['Test_Error_max'].to_numpy()
+
+    plt.plot(av_error_tab, label='one2one average error #' + str(idx))
+    plt.plot(max_error_tab, label='one2one max error #' + str(idx))
+
+    plt.ylabel('Test Error')
+    plt.xlabel('Epochs')
+
+    plt.title('Unspervised test error with label association')
+    plt.legend()
+
+    return av_error_tab, max_error_tab
+
+
 def plot_mean(store_train_error, store_test_error):
     '''
     Plot mean train & test error with +/- std
@@ -34,7 +54,7 @@ def plot_mean(store_train_error, store_test_error):
     try:
         store_train_error, store_test_error = np.array(store_train_error), np.array(store_test_error)
         mean_train, mean_test = np.mean(store_train_error, axis = 0), np.mean(store_test_error, axis = 0)
-        std_train, std_test = np.std(store_train_error, axis = 0), np.std(store_test_error, axis = 0)
+        std_train, std_test = np.std(store_train_error, axis = 0), np.std(store_test_error, axis=0)
         epochs = np.arange(0, len(store_test_error[0]))
         plt.figure()
         plt.plot(epochs, mean_train, label = 'mean_train_error')
@@ -53,21 +73,62 @@ def plot_mean(store_train_error, store_test_error):
 
     return 0
 
+def return_legend(json_path):
+    with open(json_path) as f:
+        jparams = json.load(f)
+
+    if jparams['batch'] == 1:
+        mode = 'sequential mode'
+    else:
+        mode = 'batch mode'
+    structure = str(jparams['fcLayers'][-1])
+
+    for i in range(1, len(jparams['fcLayers'])):
+        structure += '-' + str(jparams['fcLayers'][-i-1])
+
+    return structure + '' + mode
+
+
+def plot_unsupervised_all(store_av_error, unsupervised_legend_name):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for i in len(store_av_error):
+        ax.plot(store_av_error[i], label=f'{unsupervised_legend_name[i]}')
+    ax.set_xlabel('Epochs')
+    ax.set_ylabel('Test Error')
+    ax.legend()
+    ax.titile('Unspervised test error with label association')
+    plt.tight_layout()
+    plt.savefig('unsupervised_compare_methods.eps', format='eps', dpi=500)
+
 if __name__ == '__main__':
     path = "\\\\?\\"+os.getcwd()
     files = os.listdir(path)
     store_train_error, store_test_error = [], []
+    store_av_error, store_max_error = [], []
+    supervised_legend_name, unsupervised_legend_name = [], []
 
     for idx, simu in enumerate(files):
         name, extension = os.path.splitext(simu)
         if not extension == '.py':
             DATAFRAME = pd.read_csv(path + '\\' + simu + '\\results.csv', sep = ',', index_col = 0)
-            train_error_tab, test_error_tab = plot_error(DATAFRAME, idx)
-            store_train_error.append(train_error_tab)
-            store_test_error.append(test_error_tab)
+            column_name = DATAFRAME.columns
+            if column_name[0] == 'Train_Error':
+                train_error_tab, test_error_tab = plot_supervised_error(DATAFRAME, idx)
+                legend_smi = return_legend(path + '\\' + simu + '\\config.json')
+                supervised_legend_name.append('Supervised'+''+legend_smi)
+                store_train_error.append(train_error_tab)
+                store_test_error.append(test_error_tab)
+            elif column_name[0] == 'Test_Error_av':
+                av_error_tab, max_error_tab = plot_unsupervised_error(DATAFRAME, idx)
+                legend_smi = return_legend(path + '\\' + simu + '\\config.json')
+                unsupervised_legend_name.append('Unsupervised'+''+legend_smi)
         else:
             pass
-    plot_mean(store_train_error, store_test_error)
+    if len(store_train_error)!=0 and len(store_test_error)!=0:
+        plot_mean(store_train_error, store_test_error)
+    elif len(store_av_error)!=0:
+        plot_unsupervised_all()
+
 
 
     plt.show()

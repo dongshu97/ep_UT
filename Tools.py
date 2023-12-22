@@ -15,73 +15,59 @@ import pandas as pd
 import shutil
 from tqdm import tqdm
 import torch.nn.functional as F
-from Network import*
+from Network import *
 
 
-def classify(net, jparams, class_loader):
-
+def classify(net, jparams, class_loader, k_select=None):
+    # todo do the sum for each batch to save the memory
     net.eval()
 
+    class_record = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
+    labels_record = torch.zeros((jparams['n_class'], 1), device=net.device)
     for batch_idx, (data, targets) in enumerate(class_loader):
 
         if net.cuda:
             targets = targets.to(net.device)
 
+        # forward propagation
         output = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
 
-        # record all the output values
-        if batch_idx == 0:
-            result_output = output
-        else:
-            result_output = torch.cat((result_output, output), 0)
+        for i in range(jparams['n_class']):
+            indice = (targets == i).nonzero(as_tuple=True)[0]
+            labels_record[i] += len(indice)
+            class_record[i, :] += torch.sum(output[indice, :], axis=0)
 
-        # record all the class sent
-        if batch_idx == 0:
-            class_vector = targets
-        else:
-            class_vector = torch.cat((class_vector, targets), 0)
-
-    ##################### classifier one2one ########################
-
-    class_moyenne = torch.zeros((jparams['n_class'], jparams['fcLayers'][0]), device=net.device)
-
-    for i in range(jparams['n_class']):
-        indice = (class_vector == i).nonzero(as_tuple=True)[0]
-        result_single = result_output[indice, :]
-        class_moyenne[i, :] = torch.mean(result_single, axis=0)
-
-    # for the unclassified neurons, we kick them out from the responses
-    unclassified = 0
+    # take the maximum activation as associated class
+    class_moyenne = torch.div(class_record, labels_record)
     response = torch.argmax(class_moyenne, 0)
-    # TODO to verify the difference between torch.max(output) and torch.max(class_moyenne)
+    # remove the unlearned neuron
     max0_indice = (torch.max(class_moyenne, 0).values == 0).nonzero(as_tuple=True)[0]
     response[max0_indice] = -1
-    unclassified += max0_indice.size(0)
 
-    return response, max0_indice
+    if k_select is None:
+        return response
+    else:
+        k_select_neuron = torch.topk(class_moyenne, k_select, dim=1).indices.flatten()
+        return response, k_select_neuron
 
-
-def classify_network(net, class_net, jparams, layer_loader):
+def classify_network(net, class_net, jparams, layer_loader, optimizer, class_smooth):
     net.eval()
     class_net.train()
 
     # define the loss of classification layer
-    if jparams['class_activation'] == 'softmax':
-        criterion = torch.nn.CrossEntropyLoss()
-    else:
-        criterion = torch.nn.MSELoss()
 
-    parameters = list(class_net.parameters())
+    criterion = torch.nn.CrossEntropyLoss()
+
 
     # create the list for training errors
     correct_train = torch.zeros(1, device=net.device).squeeze()
     total_train = torch.zeros(1, device=net.device).squeeze()
 
-    # construct the optimizer
-    if jparams['class_Optimizer'] == 'Adam':
-        optimizer = torch.optim.Adam(parameters, lr=jparams['class_lr'])
-    elif jparams['class_Optimizer'] == 'SGD':
-        optimizer = torch.optim.SGD(parameters, lr=jparams['class_lr'])
+    # # construct the optimizer
+    # if jparams['class_Optimizer'] == 'Adam':
+    #     optimizer = torch.optim.Adam(parameters, lr=jparams['class_lr'])
+    # elif jparams['class_Optimizer'] == 'SGD':
+    #     optimizer = torch.optim.SGD(parameters, lr=jparams['class_lr'])
 
     for batch_idx, (data, targets) in enumerate(layer_loader):
         optimizer.zero_grad()
@@ -91,9 +77,11 @@ def classify_network(net, class_net, jparams, layer_loader):
 
         x = inference_EP(net, jparams, data, loss_type=jparams['lossFunction'])
         output = class_net.forward(x)
-        # calculate the loss
+        if class_smooth:
+            targets = smoothLabels(targets.to(torch.float32), 0.3, 1)
 
-        loss = criterion(output, targets.to(torch.float32))
+        # calculate the loss
+        loss = criterion(output, targets)
         # backpropagation
         loss.backward()
         optimizer.step()
@@ -124,7 +112,7 @@ def test_unsupervised_ep_layer(net, class_net, jparams, test_loader):
         total_batch += 1
         # record the total test
         total_test += targets.size()[0]
-
+        targets = targets.type(torch.LongTensor)
         if net.cuda:
             targets = targets.to(net.device)
 
@@ -193,7 +181,14 @@ def Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             del(targets)
             output = s[0].clone()
             targets, maxindex = define_unsupervised_target(output, jparams['nudge_N'], net.device, Xth)
-            targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
+            if jparams['Smooth']:
+                targets = smoothLabels(targets, 0.3, jparams['nudge_N'])
+        else:
+            if jparams['Smooth']:
+                targets = smoothLabels(targets, 0.3, 1)
+
+        if jparams['Dropout']:
+            targets = p_distribut[0]*targets
 
         if jparams['errorEstimate'] == 'one-sided':
             # nudge phase
@@ -221,6 +216,7 @@ def Conv_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             # update the weights
             net.computeConvGradientEP(data, splus, smoins, Pplus_ind, Pmoins_ind)
             optimizer.step()
+
         if Xth is None:
             # calculate the training error
             prediction = torch.argmax(seq[0].detach(), dim=1)
@@ -282,8 +278,15 @@ def Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
             del (targets)
             output = s[0].clone()
             targets, maxindex = define_unsupervised_target(output, jparams['nudge_N'], net.device, Xth)
+            if jparams['Smooth']:
+                targets = smoothLabels(targets, 0.3, jparams['nudge_N'])
 
-            targets = smoothLabels(targets, 0.2, jparams['nudge_N'])
+        else:
+            if jparams['Smooth']:
+                targets = smoothLabels(targets, 0.3, 1)
+
+        if jparams['Dropout']:
+            targets = p_distribut[0] * targets
 
         if jparams['errorEstimate'] == 'one-sided':
             # nudge phase
@@ -328,7 +331,7 @@ def Mlp_MSE_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
         return Xth
 
 
-def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
+def Mlp_Centropy_train_cycle(net, jparams, train_loader, optimizer, Xth=None):
 
     total_train = torch.zeros(1, device=net.device).squeeze()
     correct_train = torch.zeros(1, device=net.device).squeeze()
@@ -375,9 +378,17 @@ def Mlp_Centropy_train_cycle(net,jparams,train_loader, optimizer, Xth=None):
             del(targets)
             #targets, maxindex = define_unsupervised_target(y, jparams['nudge_N'], net.device, Xth)
             targets, maxindex = define_unsupervised_target(rho_y, jparams['nudge_N'], net.device, Xth)
+            # label smoothing
+            if jparams['Smooth']:
+                targets = smoothLabels(targets.float(), 0.3, jparams['nudge_N'])
 
-        # label smoothing
-        targets = smoothLabels(targets.float(), 0.2, jparams['nudge_N'])
+        else:
+            # label smoothing
+            if jparams['Smooth']:
+                targets = smoothLabels(targets.float(), 0.3, 1)
+
+        if jparams['Dropout']:
+            targets = y_distribut*targets
 
         if jparams['errorEstimate'] == 'one-sided':
             # nudging phase
@@ -626,12 +637,12 @@ def initDataframe(path, method='supervised', dataframe_to_init='results.csv'):
         prefix = '/'
 
     if os.path.isfile(path + dataframe_to_init):
-        dataframe = pd.read_csv(path + dataframe_to_init, sep = ',', index_col = 0)
+        dataframe = pd.read_csv(path + dataframe_to_init, sep = ',', index_col=0)
     else:
         if method == 'supervised':
             columns_header = ['Train_Error', 'Min_Train_Error', 'Test_Error', 'Min_Test_Error']
         elif method == 'unsupervised':
-            columns_header = ['Test_Error_av', 'Min_Test_Error_av', 'Test_Error_max', 'Min_Test_Error_max']
+            columns_header = ['One2one_av_Error', 'Min_One2one_av', 'One2one_max_Error', 'Min_One2one_max_Error']
         elif method == 'semi-supervised':
             # TODO maybe to be changed
             columns_header = ['Unsupervised_Test_Error', 'Min_Unsupervised_Test_Error', 'Supervised_Test_Error', 'Min_Supervised_Test_Error']

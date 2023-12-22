@@ -38,7 +38,7 @@ def plot_imshow(x, out_nb, display, imShape, figName, path, prefix):
     cb = fig.colorbar(plot, cax=cax)
     cb.ax.tick_params(labelsize=8)
     fig.suptitle('Imshow of ' + figName + ' neurons', fontsize=10)
-    plt.savefig(str(path) + prefix + figName + '.png', format='png', dpi=300)
+    plt.savefig(str(path) + prefix + figName + '.pdf', format='pdf', dpi=500)
 
 
 def plot_spike(spike, figName, path, prefix):
